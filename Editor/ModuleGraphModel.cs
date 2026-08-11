@@ -106,7 +106,8 @@ namespace AceLand.Lifecycle.Editor
                     }
                     else
                     {
-                        AddIssue(data, $"'{n.DisplayName}' depends on unknown module '{d.Name}'.");
+                        AddIssue(data, $"'{n.DisplayName}' depends on unknown module '{d.Name}' " +
+                                       $"(from {ScriptLocator.DescribeOrigin(d)}).");
                     }
                 }
             }

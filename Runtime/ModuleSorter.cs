@@ -82,7 +82,7 @@ namespace AceLand.Lifecycle
             }
         }
 
-        static int CompareStable(ModuleEntry a, ModuleEntry b)
+        private static int CompareStable(ModuleEntry a, ModuleEntry b)
         {
             var c = a.Order.CompareTo(b.Order);
             return c != 0 ? c : string.CompareOrdinal(a.Id?.FullName, b.Id?.FullName);

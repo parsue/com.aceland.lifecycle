@@ -13,20 +13,20 @@ namespace AceLand.Lifecycle
     {
         // Assets are not fully loaded yet → only reset state and install hooks here; do not touch assets.
         [OnCodeInitializing]
-        static void OnCodeInitializing()
+        private static void OnCodeInitializing()
         {
             LifecycleToken.Prepare();
             ApplicationQuitPipeline.Install();
         }
 
         [OnCodeUnloading]
-        static void OnCodeUnloading() => ShutdownEverything();
+        private static void OnCodeUnloading() => ShutdownEverything();
 
         [OnCodeDeinitializing]
-        static void OnCodeDeinitializing() => ShutdownEverything();
+        private static void OnCodeDeinitializing() => ShutdownEverything();
 
         [OnEnteringPlayMode]
-        static void OnEnteringPlayMode()
+        private static void OnEnteringPlayMode()
         {
             ApplicationQuitPipeline.ResetStatics();
             ModuleRegistry.ResetStatics();
@@ -35,9 +35,9 @@ namespace AceLand.Lifecycle
         }
 
         [OnExitingPlayMode]
-        static void OnExitingPlayMode() => ShutdownEverything();
+        private static void OnExitingPlayMode() => ShutdownEverything();
 
-        static void ShutdownEverything()
+        private static void ShutdownEverything()
         {
             ModuleRegistry.ShutdownAll();
             LifecycleToken.SignalQuitting();
@@ -47,13 +47,13 @@ namespace AceLand.Lifecycle
         // Phase driving still relies on RuntimeInitializeOnLoadMethod:
         // it guarantees that all assemblies finish one stage before the next begins, which is exactly the barrier we want.
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterAssembliesLoaded)]
-        static void RunCore() => ModuleRegistry.RunPhase(ModulePhase.Core);
+        private static void RunCore() => ModuleRegistry.RunPhase(ModulePhase.Core);
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
-        static void RunRuntime() => ModuleRegistry.RunPhase(ModulePhase.Runtime);
+        private static void RunRuntime() => ModuleRegistry.RunPhase(ModulePhase.Runtime);
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        static void RunScene()
+        private static void RunScene()
         {
             ModuleRegistry.RunPhase(ModulePhase.Scene);
             ModuleRegistry.RunPhase(ModulePhase.Late);

@@ -5,7 +5,7 @@ namespace AceLand.Lifecycle.Editor
 {
     internal sealed class QuitPipelineWindow : EditorWindow
     {
-        Vector2 _scroll;
+        private Vector2 _scroll;
 
         [MenuItem("Tools/AceLand/Lifecycle/Quit Pipeline", priority = 13)]
         public static void Open()
@@ -16,18 +16,19 @@ namespace AceLand.Lifecycle.Editor
             w.Show();
         }
 
-        void OnEnable() => EditorApplication.update += Tick;
-        void OnDisable() => EditorApplication.update -= Tick;
+        private void OnEnable() => EditorApplication.update += Tick;
+        private void OnDisable() => EditorApplication.update -= Tick;
 
-        double _last;
-        void Tick()
+        private double _last;
+
+        private void Tick()
         {
             if (EditorApplication.timeSinceStartup - _last < 0.3) return;
             _last = EditorApplication.timeSinceStartup;
             Repaint();
         }
 
-        void OnGUI()
+        private void OnGUI()
         {
             if (!Application.isPlaying)
             {

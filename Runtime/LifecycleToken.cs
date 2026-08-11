@@ -13,26 +13,26 @@ namespace AceLand.Lifecycle
     /// </summary>
     public static class LifecycleToken
     {
-        static CancellationTokenSource s_AliveCts;
-        static CancellationTokenSource s_QuittingCts;
-        static CancellationToken s_Alive;
-        static CancellationToken s_Quitting;
+        private static CancellationTokenSource _aliveCts;
+        private static CancellationTokenSource _quittingCts;
+        private static CancellationToken _alive;
+        private static CancellationToken _quitting;
 
-        static readonly HashSet<LinkedTokenSource> s_Linked = new HashSet<LinkedTokenSource>();
-        static readonly object s_Lock = new object();
+        private static readonly HashSet<LinkedTokenSource> linked = new();
+        private static readonly object @lock = new();
 
         static LifecycleToken() => Prepare();
 
         // ── Main tokens ─────────────────────────────────────────────────────
 
-        public static CancellationToken ApplicationAlive => s_Alive;
-        public static CancellationToken Quitting => s_Quitting;
+        public static CancellationToken ApplicationAlive => _alive;
+        public static CancellationToken Quitting => _quitting;
 
-        public static bool IsAlive => !s_Alive.IsCancellationRequested;
-        public static bool IsQuitting => s_Quitting.IsCancellationRequested;
+        public static bool IsAlive => !_alive.IsCancellationRequested;
+        public static bool IsQuitting => _quitting.IsCancellationRequested;
 
         /// <summary>Does nothing while alive; throws OperationCanceledException once shut down.</summary>
-        public static void ThrowIfDead() => s_Alive.ThrowIfCancellationRequested();
+        public static void ThrowIfDead() => _alive.ThrowIfCancellationRequested();
 
         // ── Linked sources ──────────────────────────────────────────────────
 
@@ -41,23 +41,23 @@ namespace AceLand.Lifecycle
         /// Always use / Dispose it, otherwise registrations pile up on the main CTS.
         /// </summary>
         public static LinkedTokenSource CreateLinked(params CancellationToken[] others)
-            => Create(s_Alive, null, others);
+            => Create(_alive, null, others);
 
         /// <summary>Same as above, plus a timeout.</summary>
         public static LinkedTokenSource CreateLinked(TimeSpan timeout, params CancellationToken[] others)
-            => Create(s_Alive, timeout, others);
+            => Create(_alive, timeout, others);
 
         public static LinkedTokenSource CreateLinked(int timeoutMilliseconds, params CancellationToken[] others)
-            => Create(s_Alive, TimeSpan.FromMilliseconds(timeoutMilliseconds), others);
+            => Create(_alive, TimeSpan.FromMilliseconds(timeoutMilliseconds), others);
 
         /// <summary>Linked to <see cref="Quitting"/>: cancelled immediately once a quit is requested.</summary>
         public static LinkedTokenSource CreateQuitLinked(params CancellationToken[] others)
-            => Create(s_Quitting, null, others);
+            => Create(_quitting, null, others);
 
         public static LinkedTokenSource CreateQuitLinked(TimeSpan timeout, params CancellationToken[] others)
-            => Create(s_Quitting, timeout, others);
+            => Create(_quitting, timeout, others);
 
-        static LinkedTokenSource Create(CancellationToken root, TimeSpan? timeout, CancellationToken[] others)
+        private static LinkedTokenSource Create(CancellationToken root, TimeSpan? timeout, CancellationToken[] others)
         {
             CancellationTokenSource cts;
 
@@ -75,14 +75,14 @@ namespace AceLand.Lifecycle
 
             if (timeout.HasValue) cts.CancelAfter(timeout.Value);
 
-            var linked = new LinkedTokenSource(cts);
-            lock (s_Lock) s_Linked.Add(linked);
-            return linked;
+            var linkedTokenSource = new LinkedTokenSource(cts);
+            lock (@lock) LifecycleToken.linked.Add(linkedTokenSource);
+            return linkedTokenSource;
         }
 
         internal static void Unregister(LinkedTokenSource src)
         {
-            lock (s_Lock) s_Linked.Remove(src);
+            lock (@lock) linked.Remove(src);
         }
 
         // // ── Utilities ───────────────────────────────────────────────────────
@@ -121,21 +121,21 @@ namespace AceLand.Lifecycle
 
         internal static void Prepare()
         {
-            s_AliveCts = new CancellationTokenSource();
-            s_QuittingCts = new CancellationTokenSource();
-            s_Alive = s_AliveCts.Token;
-            s_Quitting = s_QuittingCts.Token;
+            _aliveCts = new CancellationTokenSource();
+            _quittingCts = new CancellationTokenSource();
+            _alive = _aliveCts.Token;
+            _quitting = _quittingCts.Token;
         }
 
         internal static void SignalQuitting()
         {
-            try { s_QuittingCts?.Cancel(); }
+            try { _quittingCts?.Cancel(); }
             catch (ObjectDisposedException) { }
         }
 
         internal static void SignalDead()
         {
-            try { s_AliveCts?.Cancel(); }
+            try { _aliveCts?.Cancel(); }
             catch (ObjectDisposedException) { }
         }
 
@@ -143,11 +143,11 @@ namespace AceLand.Lifecycle
         internal static void ResetStatics()
         {
             LinkedTokenSource[] leaked;
-            lock (s_Lock)
+            lock (@lock)
             {
-                leaked = new LinkedTokenSource[s_Linked.Count];
-                s_Linked.CopyTo(leaked);
-                s_Linked.Clear();
+                leaked = new LinkedTokenSource[linked.Count];
+                linked.CopyTo(leaked);
+                linked.Clear();
             }
 
             if (leaked.Length > 0)
@@ -159,8 +159,8 @@ namespace AceLand.Lifecycle
             SignalQuitting();
             SignalDead();
 
-            s_AliveCts?.Dispose();
-            s_QuittingCts?.Dispose();
+            _aliveCts?.Dispose();
+            _quittingCts?.Dispose();
 
             Prepare();
         }
@@ -172,9 +172,9 @@ namespace AceLand.Lifecycle
     /// </summary>
     public sealed class LinkedTokenSource : IDisposable
     {
-        CancellationTokenSource _cts;
-        readonly CancellationToken _token;
-        bool _disposed;
+        private CancellationTokenSource _cts;
+        private readonly CancellationToken _token;
+        private bool _disposed;
 
         internal LinkedTokenSource(CancellationTokenSource cts)
         {
@@ -210,11 +210,19 @@ namespace AceLand.Lifecycle
         {
             if (_disposed) return;
             _disposed = true;
-            try { _cts?.Dispose(); } catch { }
+            try
+            {
+                _cts?.Dispose();
+            }
+            catch
+            {
+                // ignored
+            }
+
             _cts = null;
         }
 
         public static implicit operator CancellationToken(LinkedTokenSource source)
-            => source?._token ?? default;
+            => source?._token ?? CancellationToken.None;
     }
 }

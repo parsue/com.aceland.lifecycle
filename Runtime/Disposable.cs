@@ -4,9 +4,9 @@ namespace AceLand.Lifecycle
 {
     internal sealed class Disposable : IDisposable
     {
-        public static readonly Disposable Empty = new Disposable(null);
+        public static readonly Disposable Empty = new(null);
 
-        Action _action;
+        private Action _action;
         public Disposable(Action action) => _action = action;
 
         public void Dispose()

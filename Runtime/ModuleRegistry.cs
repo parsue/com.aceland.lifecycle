@@ -11,17 +11,17 @@ namespace AceLand.Lifecycle
     /// </summary>
     public static class ModuleRegistry
     {
-        static readonly List<ModuleEntry> s_Entries = new List<ModuleEntry>();
-        static readonly Dictionary<Type, ModuleEntry> s_ById = new Dictionary<Type, ModuleEntry>();
-        static readonly List<ModuleEntry> s_Started = new List<ModuleEntry>();
-        static readonly List<string> s_Issues = new List<string>();
-        static readonly Dictionary<Type, List<Action<IModule>>> s_ReadyCallbacks
-            = new Dictionary<Type, List<Action<IModule>>>();
-        internal static IReadOnlyList<ModuleEntry> StartedEntries => s_Started;
+        private static readonly List<ModuleEntry> entries = new();
+        private static readonly Dictionary<Type, ModuleEntry> byId = new();
+        private static readonly List<ModuleEntry> started = new();
+        private static readonly List<string> issues = new();
 
-        static Task s_Chain = Task.CompletedTask;
-        static bool s_Scanned;
-        static bool s_ShuttingDown;
+        private static readonly Dictionary<Type, List<Action<IModule>>> readyCallbacks = new();
+        internal static IReadOnlyList<ModuleEntry> StartedEntries => started;
+
+        private static Task _chain = Task.CompletedTask;
+        private static bool _scanned;
+        private static bool _shuttingDown;
 
         /// <summary>
         /// State change notification. <b>Never replayed</b> — subscribing in Start() misses every event from the Core / Runtime phases.
@@ -30,10 +30,10 @@ namespace AceLand.Lifecycle
         public static event Action<ModuleEntry> ModuleStateChanged;
 
         /// <summary>A Task that completes when the entire initialization chain (including async modules) is done.</summary>
-        public static Task Ready => s_Chain;
+        public static Task Ready => _chain;
 
-        public static IReadOnlyList<ModuleEntry> Entries => s_Entries;
-        public static IReadOnlyList<string> Issues => s_Issues;
+        public static IReadOnlyList<ModuleEntry> Entries => entries;
+        public static IReadOnlyList<string> Issues => issues;
 
         // ── Registration ────────────────────────────────────────────────────
 
@@ -55,7 +55,7 @@ namespace AceLand.Lifecycle
                                       Type[] dependsOn, int? order, bool autoRegistered)
         {
             if (module == null) { LifecycleLog.Error("Register(null) ignored."); return; }
-            if (id == null) id = module.GetType();
+            id ??= module.GetType();
 
             var attr = (LifecycleModuleAttribute)Attribute.GetCustomAttribute(
                 module.GetType(), typeof(LifecycleModuleAttribute));
@@ -75,13 +75,13 @@ namespace AceLand.Lifecycle
             var deps = dependsOn ?? attr?.DependsOn ?? Type.EmptyTypes;
             var ord = order ?? attr?.Order ?? 0;
 
-            if (s_ById.TryGetValue(id, out var existing))
+            if (byId.TryGetValue(id, out var existing))
             {
                 // A manual registration may override the auto-scanned result; anything else counts as a duplicate.
                 if (existing.AutoRegistered && !autoRegistered)
                 {
-                    s_Entries.Remove(existing);
-                    s_ById.Remove(id);
+                    entries.Remove(existing);
+                    byId.Remove(id);
                 }
                 else
                 {
@@ -103,8 +103,8 @@ namespace AceLand.Lifecycle
                 State = ModuleState.Registered,
             };
 
-            s_Entries.Add(entry);
-            s_ById[id] = entry;
+            entries.Add(entry);
+            byId[id] = entry;
             ModuleStateChanged?.Invoke(entry);
         }
 
@@ -113,11 +113,11 @@ namespace AceLand.Lifecycle
         public static bool IsReady<T>() => IsReady(typeof(T));
 
         public static bool IsReady(Type id)
-            => id != null && s_ById.TryGetValue(id, out var e) && e.State == ModuleState.Ready;
+            => id != null && byId.TryGetValue(id, out var e) && e.State == ModuleState.Ready;
 
         public static bool TryGet<T>(out T module) where T : class
         {
-            if (s_ById.TryGetValue(typeof(T), out var e) && e.State == ModuleState.Ready)
+            if (byId.TryGetValue(typeof(T), out var e) && e.State == ModuleState.Ready)
             {
                 module = e.Module as T;
                 return module != null;
@@ -148,7 +148,7 @@ namespace AceLand.Lifecycle
 
             var id = typeof(T);
 
-            if (s_ById.TryGetValue(id, out var existing))
+            if (byId.TryGetValue(id, out var existing))
             {
                 switch (existing.State)
                 {
@@ -167,13 +167,13 @@ namespace AceLand.Lifecycle
 
             Action<IModule> boxed = m => SafeInvoke(callback, m as T, id);
 
-            if (!s_ReadyCallbacks.TryGetValue(id, out var list))
-                s_ReadyCallbacks[id] = list = new List<Action<IModule>>();
+            if (!readyCallbacks.TryGetValue(id, out var list))
+                readyCallbacks[id] = list = new List<Action<IModule>>();
             list.Add(boxed);
 
             return new Disposable(() =>
             {
-                if (s_ReadyCallbacks.TryGetValue(id, out var l)) l.Remove(boxed);
+                if (readyCallbacks.TryGetValue(id, out var l)) l.Remove(boxed);
             });
         }
 
@@ -207,9 +207,9 @@ namespace AceLand.Lifecycle
         {
             if (observer == null) return Disposable.Empty;
 
-            for (int i = 0; i < s_Entries.Count; i++)
+            foreach (var t in entries)
             {
-                try { observer(s_Entries[i]); }
+                try { observer(t); }
                 catch (Exception ex) { LifecycleLog.Exception(ex); }
             }
 
@@ -217,7 +217,7 @@ namespace AceLand.Lifecycle
             return new Disposable(() => ModuleStateChanged -= observer);
         }
 
-        static void SafeInvoke<T>(Action<T> callback, T module, Type id) where T : class
+        private static void SafeInvoke<T>(Action<T> callback, T module, Type id) where T : class
         {
             if (module == null)
             {
@@ -229,25 +229,26 @@ namespace AceLand.Lifecycle
             catch (Exception ex) { LifecycleLog.Exception(ex); }
         }
 
-        static void FlushReadyCallbacks(ModuleEntry entry)
+        private static void FlushReadyCallbacks(ModuleEntry entry)
         {
-            if (!s_ReadyCallbacks.TryGetValue(entry.Id, out var list) || list.Count == 0) return;
+            if (!readyCallbacks.TryGetValue(entry.Id, out var list) || list.Count == 0) return;
 
             // Take a copy: a callback may register new callbacks while running
             var snapshot = list.ToArray();
-            s_ReadyCallbacks.Remove(entry.Id);
+            readyCallbacks.Remove(entry.Id);
 
-            for (int i = 0; i < snapshot.Length; i++) snapshot[i](entry.Module);
+            foreach (var t in snapshot)
+                t(entry.Module);
         }
 
         // ── Execution ───────────────────────────────────────────────────────
 
         internal static void RunPhase(ModulePhase phase)
         {
-            s_Chain = RunPhaseChained(s_Chain, phase);
+            _chain = RunPhaseChained(_chain, phase);
         }
 
-        static async Task RunPhaseChained(Task previous, ModulePhase phase)
+        private static async Task RunPhaseChained(Task previous, ModulePhase phase)
         {
             // When previous is already completed, the await continues synchronously → fully synchronous projects behave exactly as they do today.
             try { await previous; }
@@ -255,23 +256,23 @@ namespace AceLand.Lifecycle
             await RunPhaseInternal(phase);
         }
 
-        static async Task RunPhaseInternal(ModulePhase phase)
+        private static async Task RunPhaseInternal(ModulePhase phase)
         {
             EnsureScanned();
 
             var batch = new List<ModuleEntry>();
-            for (int i = 0; i < s_Entries.Count; i++)
-                if (s_Entries[i].Phase == phase && s_Entries[i].State == ModuleState.Registered)
-                    batch.Add(s_Entries[i]);
+            foreach (var t in entries)
+                if (t.Phase == phase && t.State == ModuleState.Registered)
+                    batch.Add(t);
 
             if (batch.Count == 0) return;
 
-            var sorted = ModuleSorter.Sort(batch, s_ById, s_Issues);
+            var sorted = ModuleSorter.Sort(batch, byId, issues);
             LifecycleLog.DumpOrder(phase, sorted);
 
             var token = GetAppToken();
 
-            for (int i = 0; i < sorted.Count; i++)
+            for (var i = 0; i < sorted.Count; i++)
             {
                 var e = sorted[i];
                 e.SortIndex = i;
@@ -298,7 +299,7 @@ namespace AceLand.Lifecycle
                         await async.InitializeAsync(token);
 
                     e.State = ModuleState.Ready;
-                    s_Started.Add(e);
+                    started.Add(e);
                     FlushReadyCallbacks(e);
                 }
                 catch (OperationCanceledException)
@@ -323,24 +324,24 @@ namespace AceLand.Lifecycle
             }
         }
 
-        static Type FirstUnmetDependency(ModuleEntry e)
+        private static Type FirstUnmetDependency(ModuleEntry e)
         {
-            for (int i = 0; i < e.DependsOn.Length; i++)
+            foreach (var d in e.DependsOn)
             {
-                var d = e.DependsOn[i];
                 if (d == null) continue;
-                if (!s_ById.TryGetValue(d, out var dep) || dep.State != ModuleState.Ready)
+                if (!byId.TryGetValue(d, out var dep) || dep.State != ModuleState.Ready)
                     return d;
             }
+
             return null;
         }
 
-        static CancellationToken GetAppToken() => LifecycleToken.ApplicationAlive;
+        private static CancellationToken GetAppToken() => LifecycleToken.ApplicationAlive;
 
-        static void EnsureScanned()
+        private static void EnsureScanned()
         {
-            if (s_Scanned) return;
-            s_Scanned = true;
+            if (_scanned) return;
+            _scanned = true;
             ModuleAutoScanner.ScanAndRegister();
         }
 
@@ -349,12 +350,12 @@ namespace AceLand.Lifecycle
         /// <summary>Shuts down all modules in the reverse order of initialization. Re-entrant.</summary>
         internal static void ShutdownAll()
         {
-            if (s_ShuttingDown) return;
-            s_ShuttingDown = true;
+            if (_shuttingDown) return;
+            _shuttingDown = true;
 
-            for (int i = s_Started.Count - 1; i >= 0; i--)
+            for (var i = started.Count - 1; i >= 0; i--)
             {
-                var e = s_Started[i];
+                var e = started[i];
                 try
                 {
                     e.Module.Shutdown();
@@ -369,9 +370,9 @@ namespace AceLand.Lifecycle
                 ModuleStateChanged?.Invoke(e);
             }
 
-            s_Started.Clear();
+            started.Clear();
             LifecycleHost.DestroyRoot();
-            s_ShuttingDown = false;
+            _shuttingDown = false;
         }
 
         /// <summary>
@@ -380,14 +381,14 @@ namespace AceLand.Lifecycle
         internal static void ResetStatics()
         {
             ShutdownAll();
-            s_Entries.Clear();
-            s_ById.Clear();
-            s_Started.Clear();
-            s_Issues.Clear();
-            s_Chain = Task.CompletedTask;
-            s_Scanned = false;
-            s_ReadyCallbacks.Clear();
-            s_ShuttingDown = false;
+            entries.Clear();
+            byId.Clear();
+            started.Clear();
+            issues.Clear();
+            _chain = Task.CompletedTask;
+            _scanned = false;
+            readyCallbacks.Clear();
+            _shuttingDown = false;
             ModuleStateChanged = null;
         }
     }

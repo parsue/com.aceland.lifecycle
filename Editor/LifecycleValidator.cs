@@ -5,7 +5,7 @@ namespace AceLand.Lifecycle.Editor
 {
     internal static class LifecycleValidator
     {
-        const string AutoValidateKey = "AceLand.Lifecycle.AutoValidate";
+        private const string AUTO_VALIDATE_KEY = "AceLand.Lifecycle.AutoValidate";
 
         [MenuItem("Tools/AceLand/Lifecycle/Validate Dependencies", priority = 11)]
         public static void Validate()
@@ -24,26 +24,26 @@ namespace AceLand.Lifecycle.Editor
         }
 
         [MenuItem("Tools/AceLand/Lifecycle/Auto Validate On Compile", priority = 12)]
-        static void ToggleAutoValidate()
+        private static void ToggleAutoValidate()
         {
-            var v = !EditorPrefs.GetBool(AutoValidateKey, false);
-            EditorPrefs.SetBool(AutoValidateKey, v);
+            var v = !EditorPrefs.GetBool(AUTO_VALIDATE_KEY, false);
+            EditorPrefs.SetBool(AUTO_VALIDATE_KEY, v);
             Menu.SetChecked("Tools/AceLand/Lifecycle/Auto Validate On Compile", v);
         }
 
         [MenuItem("Tools/AceLand/Lifecycle/Auto Validate On Compile", true)]
-        static bool ToggleAutoValidateValidate()
+        private static bool ToggleAutoValidateValidate()
         {
             Menu.SetChecked("Tools/AceLand/Lifecycle/Auto Validate On Compile",
-                            EditorPrefs.GetBool(AutoValidateKey, false));
+                            EditorPrefs.GetBool(AUTO_VALIDATE_KEY, false));
             return true;
         }
 
         // caution: don't touch asset. pure reflection TypeCache, safe.
         [InitializeOnLoadMethod]
-        static void OnLoad()
+        private static void OnLoad()
         {
-            if (!EditorPrefs.GetBool(AutoValidateKey, false)) return;
+            if (!EditorPrefs.GetBool(AUTO_VALIDATE_KEY, false)) return;
             EditorApplication.delayCall += Validate;
         }
     }

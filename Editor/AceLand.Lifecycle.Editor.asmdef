@@ -1,14 +1,18 @@
-﻿{
-  "name": "AceLand.Lifecycle.Editor",
-  "rootNamespace": "AceLand.Lifecycle.Editor",
-  "references": [ "AceLand.Lifecycle" ],
-  "includePlatforms": [ "Editor" ],
-  "excludePlatforms": [],
-  "allowUnsafeCode": false,
-  "overrideReferences": false,
-  "precompiledReferences": [],
-  "autoReferenced": true,
-  "defineConstraints": [],
-  "versionDefines": [],
-  "noEngineReferences": false
+{
+    "name": "AceLand.Lifecycle.Editor",
+    "rootNamespace": "AceLand.Lifecycle",
+    "references": [
+        "AceLand.Lifecycle"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
 }

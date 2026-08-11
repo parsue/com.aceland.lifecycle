@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 
-namespace AceLand.Lifecycle.Tests
+namespace AceLand.Lifecycle.Tests.Editor
 {
     public class ModuleSorterTests
     {

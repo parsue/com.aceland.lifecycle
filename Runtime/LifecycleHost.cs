@@ -8,45 +8,45 @@ namespace AceLand.Lifecycle
     /// </summary>
     public static class LifecycleHost
     {
-        static GameObject s_Root;
-        static LifecycleHostBehaviour s_Behaviour;
+        private static GameObject _root;
+        private static LifecycleHostBehaviour _behaviour;
 
-        public static GameObject SRoot
+        public static GameObject Root
         {
             get
             {
                 EnsureHost();
-                return s_Root;
+                return _root;
             }
         }
 
-        public static T AddComponent<T>() where T : Component => SRoot.AddComponent<T>();
+        public static T AddComponent<T>() where T : Component => Root.AddComponent<T>();
 
         public static MonoBehaviour CoroutineRunner
         {
-            get { EnsureHost(); return s_Behaviour; }
+            get { EnsureHost(); return _behaviour; }
         }
 
         internal static void EnsureHost()
         {
-            if (s_Root != null) return;
+            if (_root != null) return;
             if (!Application.isPlaying) return;
 
-            s_Root = new GameObject("[AceLand Lifecycle]")
+            _root = new GameObject("[AceLand Lifecycle]")
             {
                 hideFlags = HideFlags.NotEditable
             };
-            Object.DontDestroyOnLoad(s_Root);
-            s_Behaviour = s_Root.AddComponent<LifecycleHostBehaviour>();
+            Object.DontDestroyOnLoad(_root);
+            _behaviour = _root.AddComponent<LifecycleHostBehaviour>();
         }
 
         internal static void DestroyRoot()
         {
-            if (s_Root == null) return;
+            if (_root == null) return;
 
-            var go = s_Root;
-            s_Root = null;
-            s_Behaviour = null;
+            var go = _root;
+            _root = null;
+            _behaviour = null;
 
             if (Application.isPlaying) Object.Destroy(go);
             else Object.DestroyImmediate(go);
@@ -57,13 +57,13 @@ namespace AceLand.Lifecycle
     [DefaultExecutionOrder(-10000)]
     internal sealed class LifecycleHostBehaviour : MonoBehaviour
     {
-        void Awake() => ApplicationQuitPipeline.Install();
+        private void Awake() => ApplicationQuitPipeline.Install();
 
         /// <summary>
         /// A safety net. Normally ApplicationQuitPipeline has already run the whole flow;
         /// this only covers platforms where wantsToQuit is never raised (iOS / Android being killed outright by the OS).
         /// </summary>
-        void OnApplicationQuit()
+        private void OnApplicationQuit()
         {
             if (ApplicationQuitPipeline.IsQuitting) return;
             LifecycleLog.Warning("Quit without pipeline (platform did not raise wantsToQuit).");

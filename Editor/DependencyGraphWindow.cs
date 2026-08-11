@@ -7,23 +7,23 @@ namespace AceLand.Lifecycle.Editor
 {
     internal sealed class DependencyGraphWindow : EditorWindow
     {
-        const float MinZoom = 0.35f;
-        const float MaxZoom = 1.6f;
-        const float SidebarWidth = 300f;
+        private const float MIN_ZOOM = 0.35f;
+        private const float MAX_ZOOM = 1.6f;
+        private const float SIDEBAR_WIDTH = 300f;
 
-        GraphData _data;
-        Vector2 _pan = Vector2.zero;
-        float _zoom = 1f;
-        GraphNode _selected;
-        Vector2 _issueScroll;
-        Vector2 _inspectorScroll;
-        bool _showIssues = true;
-        bool _liveMode = true;
-        string _search = string.Empty;
-        double _lastRepaint;
+        private GraphData _data;
+        private Vector2 _pan = Vector2.zero;
+        private float _zoom = 1f;
+        private GraphNode _selected;
+        private Vector2 _issueScroll;
+        private Vector2 _inspectorScroll;
+        private bool _showIssues = true;
+        private bool _liveMode = true;
+        private string _search = string.Empty;
+        private double _lastRepaint;
 
-        readonly HashSet<Type> _highlightUp = new HashSet<Type>();
-        readonly HashSet<Type> _highlightDown = new HashSet<Type>();
+        private readonly HashSet<Type> _highlightUp = new HashSet<Type>();
+        private readonly HashSet<Type> _highlightDown = new HashSet<Type>();
 
         [MenuItem("Tools/AceLand/Lifecycle/Dependency Graph", priority = 10)]
         public static void Open()
@@ -34,22 +34,22 @@ namespace AceLand.Lifecycle.Editor
             w.Show();
         }
 
-        void OnEnable()
+        private void OnEnable()
         {
             Rebuild();
             EditorApplication.playModeStateChanged += OnPlayModeChanged;
             EditorApplication.update += OnEditorUpdate;
         }
 
-        void OnDisable()
+        private void OnDisable()
         {
             EditorApplication.playModeStateChanged -= OnPlayModeChanged;
             EditorApplication.update -= OnEditorUpdate;
         }
 
-        void OnPlayModeChanged(PlayModeStateChange _) => Rebuild();
+        private void OnPlayModeChanged(PlayModeStateChange _) => Rebuild();
 
-        void OnEditorUpdate()
+        private void OnEditorUpdate()
         {
             // Play 模式下每 0.5 秒刷新一次狀態顏色，成本可忽略。
             if (!Application.isPlaying || !_liveMode) return;
@@ -59,7 +59,7 @@ namespace AceLand.Lifecycle.Editor
             Repaint();
         }
 
-        void Rebuild()
+        private void Rebuild()
         {
             _data = ModuleGraphModel.Build(_liveMode);
             if (_selected != null)
@@ -72,7 +72,7 @@ namespace AceLand.Lifecycle.Editor
 
         // ── GUI ────────────────────────────────────────────────────────────
 
-        void OnGUI()
+        private void OnGUI()
         {
             if (_data == null) Rebuild();
 
@@ -81,15 +81,15 @@ namespace AceLand.Lifecycle.Editor
             var body = new Rect(0f, EditorStyles.toolbar.fixedHeight,
                                 position.width, position.height - EditorStyles.toolbar.fixedHeight);
 
-            var graphRect = new Rect(body.x, body.y, body.width - SidebarWidth, body.height);
-            var sideRect = new Rect(body.xMax - SidebarWidth, body.y, SidebarWidth, body.height);
+            var graphRect = new Rect(body.x, body.y, body.width - SIDEBAR_WIDTH, body.height);
+            var sideRect = new Rect(body.xMax - SIDEBAR_WIDTH, body.y, SIDEBAR_WIDTH, body.height);
 
             HandleInput(graphRect);
             DrawGraph(graphRect);
             DrawSidebar(sideRect);
         }
 
-        void DrawToolbar()
+        private void DrawToolbar()
         {
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
             {
@@ -106,7 +106,7 @@ namespace AceLand.Lifecycle.Editor
 
                 GUILayout.Space(8f);
                 GUILayout.Label("Zoom", EditorStyles.miniLabel, GUILayout.Width(36f));
-                _zoom = GUILayout.HorizontalSlider(_zoom, MinZoom, MaxZoom, GUILayout.Width(90f));
+                _zoom = GUILayout.HorizontalSlider(_zoom, MIN_ZOOM, MAX_ZOOM, GUILayout.Width(90f));
 
                 GUILayout.FlexibleSpace();
 
@@ -120,19 +120,19 @@ namespace AceLand.Lifecycle.Editor
                                                EditorStyles.toolbarButton, GUILayout.Width(90f));
                 GUI.color = c;
 
-                GUILayout.Label(_data != null && _data.IsLive ? "runtime" : "static",
+                GUILayout.Label(_data is { IsLive: true } ? "runtime" : "static",
                                 EditorStyles.miniLabel, GUILayout.Width(48f));
             }
         }
 
-        void FrameAll()
+        private void FrameAll()
         {
             if (_data == null) return;
             _zoom = 1f;
             _pan = new Vector2(10f, 10f);
         }
 
-        void HandleInput(Rect graphRect)
+        private void HandleInput(Rect graphRect)
         {
             var e = Event.current;
             if (!graphRect.Contains(e.mousePosition)) return;
@@ -140,7 +140,7 @@ namespace AceLand.Lifecycle.Editor
             if (e.type == EventType.ScrollWheel)
             {
                 var before = ScreenToWorld(e.mousePosition, graphRect);
-                _zoom = Mathf.Clamp(_zoom * (1f - e.delta.y * 0.035f), MinZoom, MaxZoom);
+                _zoom = Mathf.Clamp(_zoom * (1f - e.delta.y * 0.035f), MIN_ZOOM, MAX_ZOOM);
                 var after = ScreenToWorld(e.mousePosition, graphRect);
                 _pan += (after - before) * _zoom;
                 e.Use();
@@ -163,22 +163,57 @@ namespace AceLand.Lifecycle.Editor
                 _selected = hit;
                 RecalculateHighlight();
 
-                if (hit != null && e.clickCount == 2) PingType(hit.Id);
+                if (hit != null && e.clickCount == 2)
+                    ScriptLocator.Open(hit.Id);
+                
                 e.Use();
                 Repaint();
             }
+            else if (e.type == EventType.ContextClick)
+            {
+                var world = ScreenToWorld(e.mousePosition, graphRect);
+                GraphNode hit = null;
+                foreach (var n in _data.Nodes)
+                    if (n.Rect.Contains(world)) { hit = n; break; }
+
+                if (hit != null)
+                {
+                    SelectNode(hit);
+                    ShowNodeMenu(hit);
+                    e.Use();
+                }
+            }
+        }
+        
+        void ShowNodeMenu(GraphNode node)
+        {
+            var menu = new GenericMenu();
+            var id = node.Id;
+
+            menu.AddItem(new GUIContent("Ping Script"), false, () => ScriptLocator.Ping(id));
+            menu.AddItem(new GUIContent("Open Script"), false, () => ScriptLocator.Open(id));
+            menu.AddSeparator("");
+            menu.AddItem(new GUIContent("Copy Type Name"), false,
+                () => EditorGUIUtility.systemCopyBuffer = id.FullName);
+            menu.AddItem(new GUIContent("Copy DependsOn Snippet"), false, () =>
+                EditorGUIUtility.systemCopyBuffer =
+                    $"DependsOn = new[] {{ typeof({id.Name}) }}");
+            menu.AddSeparator("");
+            menu.AddItem(new GUIContent($"Origin: {ScriptLocator.DescribeOrigin(id)}"), false, null);
+
+            menu.ShowAsContext();
         }
 
-        Vector2 ScreenToWorld(Vector2 screen, Rect graphRect)
+        private Vector2 ScreenToWorld(Vector2 screen, Rect graphRect)
             => (screen - graphRect.position - _pan) / _zoom;
 
-        Rect WorldToScreen(Rect world, Rect graphRect)
+        private Rect WorldToScreen(Rect world, Rect graphRect)
             => new Rect(world.x * _zoom + _pan.x + graphRect.x,
                         world.y * _zoom + _pan.y + graphRect.y,
                         world.width * _zoom,
                         world.height * _zoom);
 
-        void RecalculateHighlight()
+        private void RecalculateHighlight()
         {
             _highlightUp.Clear();
             _highlightDown.Clear();
@@ -204,7 +239,7 @@ namespace AceLand.Lifecycle.Editor
 
         // ── Draw ────────────────────────────────────────────────────────────
 
-        void DrawGraph(Rect graphRect)
+        private void DrawGraph(Rect graphRect)
         {
             EditorGUI.DrawRect(graphRect, new Color(0.16f, 0.16f, 0.17f));
             GUI.BeginClip(graphRect);
@@ -221,7 +256,7 @@ namespace AceLand.Lifecycle.Editor
                 var header = new Rect(r.x + 8f, r.y + 4f, r.width - 16f, 20f);
                 var style = new GUIStyle(EditorStyles.boldLabel)
                 {
-                    fontSize = Mathf.RoundToInt(Mathf.Lerp(9f, 14f, Mathf.InverseLerp(MinZoom, MaxZoom, _zoom))),
+                    fontSize = Mathf.RoundToInt(Mathf.Lerp(9f, 14f, Mathf.InverseLerp(MIN_ZOOM, MAX_ZOOM, _zoom))),
                     normal = { textColor = PhaseColor(band.Phase) }
                 };
                 GUI.Label(header, $"{band.Phase}  ({band.Count})  ·  {PhaseHint(band.Phase)}", style);
@@ -247,7 +282,7 @@ namespace AceLand.Lifecycle.Editor
             GUI.EndClip();
         }
 
-        void DrawGrid(Rect rect)
+        private void DrawGrid(Rect rect)
         {
             const float step = 24f;
             var spacing = step * _zoom;
@@ -255,14 +290,14 @@ namespace AceLand.Lifecycle.Editor
 
             Handles.BeginGUI();
             Handles.color = new Color(1f, 1f, 1f, 0.035f);
-            for (float x = _pan.x % spacing; x < rect.width; x += spacing)
+            for (var x = _pan.x % spacing; x < rect.width; x += spacing)
                 Handles.DrawLine(new Vector3(x, 0f), new Vector3(x, rect.height));
-            for (float y = _pan.y % spacing; y < rect.height; y += spacing)
+            for (var y = _pan.y % spacing; y < rect.height; y += spacing)
                 Handles.DrawLine(new Vector3(0f, y), new Vector3(rect.width, y));
             Handles.EndGUI();
         }
 
-        void DrawEdge(GraphNode from, GraphNode to, Rect local)
+        private void DrawEdge(GraphNode from, GraphNode to, Rect local)
         {
             var a = WorldToScreen(from.Rect, local);
             var b = WorldToScreen(to.Rect, local);
@@ -272,22 +307,28 @@ namespace AceLand.Lifecycle.Editor
             var tangent = Mathf.Max(40f, Mathf.Abs(end.x - start.x) * 0.5f);
 
             var color = new Color(1f, 1f, 1f, 0.22f);
-            float width = 2f;
+            var width = 2f;
 
-            bool cyc = _data.CycleMembers.Contains(from.Id) && _data.CycleMembers.Contains(to.Id);
+            var cyc = _data.CycleMembers.Contains(from.Id) && _data.CycleMembers.Contains(to.Id);
             if (cyc) { color = new Color(1f, 0.3f, 0.25f, 0.95f); width = 3f; }
             else if (_selected != null)
             {
-                bool up = to.Id == _selected.Id || (_highlightUp.Contains(to.Id) && _highlightUp.Contains(from.Id))
-                          || (to.Id == _selected.Id);
-                bool down = from.Id == _selected.Id || _highlightDown.Contains(from.Id);
+                var up = to.Id == _selected.Id || (_highlightUp.Contains(to.Id) && _highlightUp.Contains(from.Id))
+                                               || (to.Id == _selected.Id);
+                var down = from.Id == _selected.Id || _highlightDown.Contains(from.Id);
 
                 if (up && (_highlightUp.Contains(from.Id) || to.Id == _selected.Id))
-                    { color = new Color(0.4f, 0.75f, 1f, 0.95f); width = 3f; }
+                {
+                    color = new Color(0.4f, 0.75f, 1f, 0.95f); width = 3f;
+                }
                 else if (down)
-                    { color = new Color(1f, 0.8f, 0.35f, 0.9f); width = 3f; }
+                {
+                    color = new Color(1f, 0.8f, 0.35f, 0.9f); width = 3f;
+                }
                 else
+                {
                     color = new Color(1f, 1f, 1f, 0.08f);
+                }
             }
 
             Handles.DrawBezier(start, end,
@@ -296,13 +337,13 @@ namespace AceLand.Lifecycle.Editor
                                color, null, width);
         }
 
-        void DrawNode(GraphNode n, Rect local)
+        private void DrawNode(GraphNode n, Rect local)
         {
             var r = WorldToScreen(n.Rect, local);
             if (!r.Overlaps(local)) return;
 
-            bool dimmed = !string.IsNullOrEmpty(_search) &&
-                          n.DisplayName.IndexOf(_search, StringComparison.OrdinalIgnoreCase) < 0;
+            var dimmed = !string.IsNullOrEmpty(_search) &&
+                         n.DisplayName.IndexOf(_search, StringComparison.OrdinalIgnoreCase) < 0;
 
             var accent = StateColor(n.State);
             var bg = new Color(0.22f, 0.23f, 0.25f, dimmed ? 0.35f : 1f);
@@ -318,8 +359,8 @@ namespace AceLand.Lifecycle.Editor
 
             if (_zoom < 0.5f) return;
 
-            int fs = Mathf.RoundToInt(11f * Mathf.Clamp(_zoom, 0.6f, 1.2f));
-            var title = new GUIStyle(EditorStyles.boldLabel)
+            var fs = Mathf.RoundToInt(11f * Mathf.Clamp(_zoom, 0.6f, 1.2f));
+            var nodeTitle = new GUIStyle(EditorStyles.boldLabel)
             {
                 fontSize = fs,
                 normal = { textColor = dimmed ? Color.gray : Color.white },
@@ -334,7 +375,7 @@ namespace AceLand.Lifecycle.Editor
 
             var pad = 8f * _zoom;
             GUI.Label(new Rect(r.x + pad + 4f, r.y + 4f * _zoom, r.width - pad * 2f, 18f * _zoom),
-                      n.DisplayName, title);
+                      n.DisplayName, nodeTitle);
 
             var line2 = n.SortIndex >= 0
                 ? $"#{n.SortIndex:00}  {n.State}  {n.InitMilliseconds:0.00} ms"
@@ -362,7 +403,7 @@ namespace AceLand.Lifecycle.Editor
                           tags, sub);
         }
 
-        static void DrawOutline(Rect r, Color c, float w)
+        private static void DrawOutline(Rect r, Color c, float w)
         {
             EditorGUI.DrawRect(new Rect(r.x, r.y, r.width, w), c);
             EditorGUI.DrawRect(new Rect(r.x, r.yMax - w, r.width, w), c);
@@ -372,7 +413,7 @@ namespace AceLand.Lifecycle.Editor
 
         // ── sidebar ────────────────────────────────────────────────────────────
 
-        void DrawSidebar(Rect rect)
+        private void DrawSidebar(Rect rect)
         {
             EditorGUI.DrawRect(rect, new Color(0.21f, 0.21f, 0.22f));
             GUILayout.BeginArea(new Rect(rect.x + 8f, rect.y + 8f, rect.width - 16f, rect.height - 16f));
@@ -402,7 +443,7 @@ namespace AceLand.Lifecycle.Editor
             _inspectorScroll = EditorGUILayout.BeginScrollView(_inspectorScroll);
 
             EditorGUILayout.LabelField(_selected.DisplayName, EditorStyles.largeLabel);
-            EditorGUILayout.LabelField(_selected.Namespace, EditorStyles.miniLabel);
+            EditorGUILayout.LabelField(ScriptLocator.DescribeOrigin(_selected.Id), EditorStyles.miniLabel);
             EditorGUILayout.Space(4f);
 
             Row("Phase", _selected.Phase.ToString());
@@ -429,7 +470,11 @@ namespace AceLand.Lifecycle.Editor
                 if (GUILayout.Button(dep.DisplayName, EditorStyles.miniButton)) SelectNode(dep);
 
             EditorGUILayout.Space(10f);
-            if (GUILayout.Button("Ping Script")) PingType(_selected.Id);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button("Ping")) ScriptLocator.Ping(_selected.Id);
+                if (GUILayout.Button("Open")) ScriptLocator.Open(_selected.Id);
+            }
 
             EditorGUILayout.EndScrollView();
             GUILayout.EndArea();
@@ -444,39 +489,22 @@ namespace AceLand.Lifecycle.Editor
             }
         }
 
-        void SelectById(Type id)
+        private void SelectById(Type id)
         {
             var n = _data.Nodes.Find(x => x.Id == id);
             if (n != null) SelectNode(n);
         }
 
-        void SelectNode(GraphNode n)
+        private void SelectNode(GraphNode n)
         {
             _selected = n;
             RecalculateHighlight();
             Repaint();
         }
 
-        static void PingType(Type t)
-        {
-            if (t == null) return;
-            foreach (var guid in AssetDatabase.FindAssets($"t:MonoScript {t.Name}"))
-            {
-                var path = AssetDatabase.GUIDToAssetPath(guid);
-                var ms = AssetDatabase.LoadAssetAtPath<MonoScript>(path);
-                if (ms == null) continue;
-                var cls = ms.GetClass();
-                if (cls == t || (cls != null && t.IsAssignableFrom(cls)))
-                {
-                    EditorGUIUtility.PingObject(ms);
-                    Selection.activeObject = ms;
-                    return;
-                }
-            }
-            LifecycleLog.Warning($"Script for '{t.Name}' not found in AssetDatabase (precompiled?).");
-        }
+        private static void PingType(Type t) => ScriptLocator.Ping(t);
 
-        static Color PhaseColor(ModulePhase p)
+        private static Color PhaseColor(ModulePhase p)
         {
             switch (p)
             {
@@ -487,7 +515,7 @@ namespace AceLand.Lifecycle.Editor
             }
         }
 
-        static string PhaseHint(ModulePhase p)
+        private static string PhaseHint(ModulePhase p)
         {
             switch (p)
             {
@@ -498,7 +526,7 @@ namespace AceLand.Lifecycle.Editor
             }
         }
 
-        static Color StateColor(ModuleState s)
+        private static Color StateColor(ModuleState s)
         {
             switch (s)
             {

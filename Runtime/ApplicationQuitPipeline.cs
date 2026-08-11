@@ -23,13 +23,13 @@ namespace AceLand.Lifecycle
         // ── Settings ────────────────────────────────────────────────────────
 
         /// <summary>Overall timeout (seconds). &lt;= 0 means infinite. After the timeout the pipeline forces its way forward so the app can never get stuck.</summary>
-        public static float TimeoutSeconds = 30f;
+        private const float TIMEOUT_SECONDS = 30f;
 
         /// <summary>Polling interval while waiting for blockers.</summary>
-        public static int BlockerPollMilliseconds = 50;
+        private const int BLOCKER_POLL_MILLISECONDS = 50;
 
         /// <summary>While shutting down, whether a second quit request from the user is let through immediately (escape hatch against deadlocks).</summary>
-        public static bool AllowForceQuitOnSecondRequest = true;
+        private const bool ALLOW_FORCE_QUIT_ON_SECOND_REQUEST = true;
 
         // ── State ───────────────────────────────────────────────────────────
 
@@ -53,10 +53,10 @@ namespace AceLand.Lifecycle
             public bool FromModule;
         }
 
-        static readonly List<HandlerEntry> s_Manual = new List<HandlerEntry>();
-        static readonly List<IQuitBlocker> s_Blockers = new List<IQuitBlocker>();
-        static bool s_Installed;
-        static int s_RequestCount;
+        private static readonly List<HandlerEntry> manual = new();
+        private static readonly List<IQuitBlocker> blockers = new();
+        private static bool _installed;
+        private static int _requestCount;
 
         /// <summary>Registers a before-quit job. Dispose the returned IDisposable to unregister.</summary>
         public static IDisposable AddHandler(Func<QuitContext, Task> handler, int order = 0, string name = null)
@@ -69,8 +69,8 @@ namespace AceLand.Lifecycle
                 Order = order,
                 Run = handler,
             };
-            s_Manual.Add(entry);
-            return new Disposable(() => s_Manual.Remove(entry));
+            manual.Add(entry);
+            return new Disposable(() => manual.Remove(entry));
         }
 
         /// <summary>Synchronous overload.</summary>
@@ -83,8 +83,8 @@ namespace AceLand.Lifecycle
         public static IDisposable AddBlocker(IQuitBlocker blocker)
         {
             if (blocker == null) return Disposable.Empty;
-            s_Blockers.Add(blocker);
-            return new Disposable(() => s_Blockers.Remove(blocker));
+            blockers.Add(blocker);
+            return new Disposable(() => blockers.Remove(blocker));
         }
 
         /// <summary>
@@ -94,8 +94,8 @@ namespace AceLand.Lifecycle
         public static IDisposable Busy(string reason)
         {
             var scope = new BusyScope(reason);
-            s_Blockers.Add(scope);
-            scope.OnDispose = () => s_Blockers.Remove(scope);
+            blockers.Add(scope);
+            scope.OnDispose = () => blockers.Remove(scope);
             return scope;
         }
 
@@ -104,8 +104,9 @@ namespace AceLand.Lifecycle
         {
             get
             {
-                for (int i = 0; i < s_Blockers.Count; i++)
-                    if (s_Blockers[i] != null && s_Blockers[i].IsBusy) return false;
+                foreach (var t in blockers)
+                    if (t is { IsBusy: true }) return false;
+
                 return true;
             }
         }
@@ -114,9 +115,10 @@ namespace AceLand.Lifecycle
         {
             get
             {
-                for (int i = 0; i < s_Blockers.Count; i++)
-                    if (s_Blockers[i] != null && s_Blockers[i].IsBusy)
-                        return s_Blockers[i].BusyReason ?? "busy";
+                foreach (var t in blockers)
+                    if (t is { IsBusy: true })
+                        return t.BusyReason ?? "busy";
+
                 return null;
             }
         }
@@ -145,8 +147,8 @@ namespace AceLand.Lifecycle
 
         internal static void Install()
         {
-            if (s_Installed) return;
-            s_Installed = true;
+            if (_installed) return;
+            _installed = true;
 
 #if UNITY_EDITOR
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
@@ -162,19 +164,19 @@ namespace AceLand.Lifecycle
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
 #endif
             Application.wantsToQuit -= OnWantsToQuit;
-            s_Installed = false;
+            _installed = false;
         }
 
 #if UNITY_EDITOR
-        static void OnPlayModeStateChanged(PlayModeStateChange state)
+        private static void OnPlayModeStateChanged(PlayModeStateChange state)
         {
             if (state != PlayModeStateChange.ExitingPlayMode) return;
             if (IsReadyToQuit) return;
 
             if (IsQuitting)
             {
-                s_RequestCount++;
-                if (AllowForceQuitOnSecondRequest && s_RequestCount >= 2)
+                _requestCount++;
+                if (ALLOW_FORCE_QUIT_ON_SECOND_REQUEST && _requestCount >= 2)
                 {
                     LifecycleLog.Warning("Force quit requested — aborting graceful shutdown.");
                     IsReadyToQuit = true;
@@ -188,11 +190,11 @@ namespace AceLand.Lifecycle
             EditorApplication.isPlaying = true;
             if (IsQuitting) return;
 
-            s_RequestCount = 1;
+            _requestCount = 1;
             _ = RunThenStopEditor();
         }
 
-        static async Task RunThenStopEditor()
+        private static async Task RunThenStopEditor()
         {
             try { await RunAsync(); }
             catch (Exception ex) { LifecycleLog.Exception(ex); }
@@ -204,14 +206,14 @@ namespace AceLand.Lifecycle
         }
 #endif
 
-        static bool OnWantsToQuit()
+        private static bool OnWantsToQuit()
         {
             if (IsReadyToQuit) return true;
 
             if (IsQuitting)
             {
-                s_RequestCount++;
-                if (AllowForceQuitOnSecondRequest && s_RequestCount >= 2)
+                _requestCount++;
+                if (ALLOW_FORCE_QUIT_ON_SECOND_REQUEST && _requestCount >= 2)
                 {
                     LifecycleLog.Warning("Force quit requested — aborting graceful shutdown.");
                     IsReadyToQuit = true;
@@ -220,12 +222,12 @@ namespace AceLand.Lifecycle
                 return false;
             }
 
-            s_RequestCount = 1;
+            _requestCount = 1;
             _ = RunThenQuitPlayer();
             return false;
         }
 
-        static async Task RunThenQuitPlayer()
+        private static async Task RunThenQuitPlayer()
         {
             try { await RunAsync(); }
             catch (Exception ex) { LifecycleLog.Exception(ex); }
@@ -238,7 +240,7 @@ namespace AceLand.Lifecycle
 
         // ── Main pipeline ───────────────────────────────────────────────────
 
-        static async Task RunAsync()
+        private static async Task RunAsync()
         {
             if (IsQuitting) return;
             IsQuitting = true;
@@ -247,7 +249,7 @@ namespace AceLand.Lifecycle
             {
                 Token = LifecycleToken.ApplicationAlive,
                 StartedAtUtc = DateTime.UtcNow,
-                TimeoutSeconds = TimeoutSeconds,
+                TimeoutSeconds = TIMEOUT_SECONDS,
             };
 
             LifecycleToken.SignalQuitting();   // The game loop stops immediately; ApplicationAlive is still alive
@@ -259,8 +261,8 @@ namespace AceLand.Lifecycle
             await WaitForBlockers(ctx);
 
             var plan = BuildPlan();
-            for (int i = 0; i < plan.Count; i++)
-                await RunHandler(plan[i], ctx);
+            foreach (var t in plan)
+                await RunHandler(t, ctx);
 
             ctx.SetStatus("Shutting down modules ...");
             ModuleRegistry.ShutdownAll();
@@ -272,7 +274,7 @@ namespace AceLand.Lifecycle
             LifecycleToken.SignalDead();       // Only now do we let ApplicationAlive die
         }
 
-        static async Task WaitForBlockers(QuitContext ctx)
+        private static async Task WaitForBlockers(QuitContext ctx)
         {
             if (IsFree) return;
 
@@ -294,12 +296,12 @@ namespace AceLand.Lifecycle
                 var current = BusyReason;
                 if (current != null && current != ctx.Status) ctx.SetStatus(current);
 
-                try { await Task.Delay(BlockerPollMilliseconds, ctx.Token); }
+                try { await Task.Delay(BLOCKER_POLL_MILLISECONDS, ctx.Token); }
                 catch (OperationCanceledException) { return; }
             }
         }
 
-        static async Task RunHandler(HandlerEntry entry, QuitContext ctx)
+        private static async Task RunHandler(HandlerEntry entry, QuitContext ctx)
         {
             if (ctx.IsTimedOut)
             {
@@ -345,7 +347,7 @@ namespace AceLand.Lifecycle
             var list = new List<HandlerEntry>();
 
             var started = ModuleRegistry.StartedEntries;
-            for (int i = started.Count - 1; i >= 0; i--)
+            for (var i = started.Count - 1; i >= 0; i--)
             {
                 if (!(started[i].Module is IQuitHandler h)) continue;
 
@@ -361,7 +363,7 @@ namespace AceLand.Lifecycle
                 });
             }
 
-            list.AddRange(s_Manual);
+            list.AddRange(manual);
 
             // OrderBy is a stable sort → entries with the same Order keep the "reverse initialization" order
             var sorted = new List<HandlerEntry>(list.Count);
@@ -369,7 +371,7 @@ namespace AceLand.Lifecycle
             return sorted;
         }
 
-        static IEnumerable<HandlerEntry> SortStable(List<HandlerEntry> list)
+        private static IEnumerable<HandlerEntry> SortStable(List<HandlerEntry> list)
         {
             var buckets = new SortedDictionary<int, List<HandlerEntry>>();
             foreach (var e in list)
@@ -391,17 +393,17 @@ namespace AceLand.Lifecycle
             return result;
         }
 
-        public static IReadOnlyList<IQuitBlocker> Blockers => s_Blockers;
+        public static IReadOnlyList<IQuitBlocker> Blockers => blockers;
 
         internal static void ResetStatics()
         {
             Uninstall();
-            s_Manual.Clear();
-            s_Blockers.Clear();
+            manual.Clear();
+            blockers.Clear();
             IsQuitting = false;
             IsReadyToQuit = false;
             CurrentStatus = null;
-            s_RequestCount = 0;
+            _requestCount = 0;
             QuitStarted = null;
             StatusChanged = null;
             QuitBlocked = null;
@@ -410,10 +412,10 @@ namespace AceLand.Lifecycle
 
         // ── helpers ────────────────────────────────────────────────────────
 
-        sealed class BusyScope : IQuitBlocker, IDisposable
+        private sealed class BusyScope : IQuitBlocker, IDisposable
         {
             public Action OnDispose;
-            bool _disposed;
+            private bool _disposed;
 
             public BusyScope(string reason) => BusyReason = reason;
 
@@ -428,10 +430,10 @@ namespace AceLand.Lifecycle
             }
         }
 
-        sealed class Disposable : IDisposable
+        private sealed class Disposable : IDisposable
         {
-            public static readonly Disposable Empty = new Disposable(null);
-            readonly Action _action;
+            public static readonly Disposable Empty = new(null);
+            private readonly Action _action;
             public Disposable(Action action) => _action = action;
             public void Dispose() => _action?.Invoke();
         }

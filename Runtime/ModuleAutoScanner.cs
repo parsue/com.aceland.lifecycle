@@ -70,7 +70,7 @@ namespace AceLand.Lifecycle
                 try
                 {
                     var instance = (IModule)Activator.CreateInstance(t, nonPublic: true);
-                    ModuleRegistry.Register(attrIdOf(t) ?? t, instance, null, null, null, autoRegistered: true);
+                    ModuleRegistry.Register(AttrIdOf(t) ?? t, instance, null, null, null, autoRegistered: true);
                 }
                 catch (Exception ex)
                 {
@@ -79,7 +79,7 @@ namespace AceLand.Lifecycle
                 }
             }
 
-            Type attrIdOf(Type t)
+            Type AttrIdOf(Type t)
             {
                 var a = (LifecycleModuleAttribute)Attribute.GetCustomAttribute(
                     t, typeof(LifecycleModuleAttribute));
@@ -89,8 +89,8 @@ namespace AceLand.Lifecycle
             WarnAboutMissedAssemblies(assemblies);
 #endif
         }
-        
-        static void WarnAboutMissedAssemblies(Assembly[] assemblies)
+
+        private static void WarnAboutMissedAssemblies(Assembly[] assemblies)
         {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             foreach (var asm in assemblies)
@@ -119,7 +119,10 @@ namespace AceLand.Lifecycle
                             $"is missing [assembly: LifecycleAssembly]. It will NEVER be registered.");
                     }
                 }
-                catch { }
+                catch
+                {
+                    // ignored
+                }
             }
 #endif
         }

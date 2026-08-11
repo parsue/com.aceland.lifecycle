@@ -6,23 +6,23 @@ namespace AceLand.Lifecycle.Editor
 {
     internal static class GraphLayout
     {
-        public const float NodeWidth = 220f;
-        public const float NodeHeight = 62f;
+        private const float NODE_WIDTH = 220f;
+        private const float NODE_HEIGHT = 62f;
 
-        const float ColumnGap = 90f;
-        const float RowGap = 26f;
-        const float PhaseGap = 70f;
-        const float BandPadding = 18f;
-        const float HeaderHeight = 30f;
-        const float OriginX = 40f;
-        const float OriginY = 70f;
+        private const float COLUMN_GAP = 90f;
+        private const float ROW_GAP = 26f;
+        private const float PHASE_GAP = 70f;
+        private const float BAND_PADDING = 18f;
+        private const float HEADER_HEIGHT = 30f;
+        private const float ORIGIN_X = 40f;
+        private const float ORIGIN_Y = 70f;
 
         public static void Layout(GraphData data, Dictionary<Type, GraphNode> byId)
         {
             data.Bands.Clear();
 
-            float x = OriginX;
-            float maxY = OriginY;
+            var x = ORIGIN_X;
+            var maxY = ORIGIN_Y;
 
             foreach (ModulePhase phase in Enum.GetValues(typeof(ModulePhase)))
             {
@@ -44,7 +44,7 @@ namespace AceLand.Lifecycle.Editor
                     list.Add(n);
                 }
 
-                float bandStart = x - BandPadding;
+                var bandStart = x - BAND_PADDING;
 
                 foreach (var kv in columns)
                 {
@@ -56,36 +56,36 @@ namespace AceLand.Lifecycle.Editor
                         return c != 0 ? c : string.CompareOrdinal(a.DisplayName, b.DisplayName);
                     });
 
-                    float y = OriginY;
+                    var y = ORIGIN_Y;
                     foreach (var n in kv.Value)
                     {
-                        n.Rect = new Rect(x, y, NodeWidth, NodeHeight);
-                        y += NodeHeight + RowGap;
+                        n.Rect = new Rect(x, y, NODE_WIDTH, NODE_HEIGHT);
+                        y += NODE_HEIGHT + ROW_GAP;
                     }
                     maxY = Mathf.Max(maxY, y);
-                    x += NodeWidth + ColumnGap;
+                    x += NODE_WIDTH + COLUMN_GAP;
                 }
 
-                x -= ColumnGap; // 最後一欄不需要欄距
+                x -= COLUMN_GAP; // 最後一欄不需要欄距
 
                 data.Bands.Add(new PhaseBand
                 {
                     Phase = phase,
                     Count = inPhase.Count,
                     Rect = new Rect(bandStart,
-                                    OriginY - HeaderHeight - BandPadding,
-                                    x - bandStart + BandPadding,
+                                    ORIGIN_Y - HEADER_HEIGHT - BAND_PADDING,
+                                    x - bandStart + BAND_PADDING,
                                     0f) // 高度稍後統一補
                 });
 
-                x += PhaseGap;
+                x += PHASE_GAP;
 
                 int Depth(GraphNode n, HashSet<Type> guard)
                 {
                     if (depth.TryGetValue(n.Id, out var cached)) return cached;
                     if (!guard.Add(n.Id)) return 0; // 有環，就地截斷
 
-                    int max = 0;
+                    var max = 0;
                     foreach (var d in n.DependsOn)
                     {
                         if (d == null) continue;
@@ -100,15 +100,15 @@ namespace AceLand.Lifecycle.Editor
                 }
             }
 
-            float bandHeight = maxY - (OriginY - HeaderHeight - BandPadding) + BandPadding;
-            for (int i = 0; i < data.Bands.Count; i++)
+            var bandHeight = maxY - (ORIGIN_Y - HEADER_HEIGHT - BAND_PADDING) + BAND_PADDING;
+            foreach (var t in data.Bands)
             {
-                var b = data.Bands[i].Rect;
+                var b = t.Rect;
                 b.height = bandHeight;
-                data.Bands[i].Rect = b;
+                t.Rect = b;
             }
 
-            data.Bounds = new Rect(0f, 0f, x + OriginX, maxY + 40f);
+            data.Bounds = new Rect(0f, 0f, x + ORIGIN_X, maxY + 40f);
         }
     }
 }

@@ -1,0 +1,9 @@
+﻿{
+  "name": "AceLand.Lifecycle.EditorTests",
+  "rootNamespace": "AceLand.Lifecycle.Tests",
+  "references": [ "AceLand.Lifecycle", "UnityEngine.TestRunner", "UnityEditor.TestRunner" ],
+  "includePlatforms": [ "Editor" ],
+  "precompiledReferences": [ "nunit.framework.dll" ],
+  "autoReferenced": false,
+  "defineConstraints": [ "UNITY_INCLUDE_TESTS" ]
+}

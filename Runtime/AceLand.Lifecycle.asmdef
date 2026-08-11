@@ -1,0 +1,20 @@
+﻿{
+  "name": "AceLand.Lifecycle",
+  "rootNamespace": "AceLand.Lifecycle",
+  "references": [],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [
+    {
+      "name": "Unity",
+      "expression": "6000.5",
+      "define": "ACELAND_UNITY_6_5_OR_NEWER"
+    }
+  ],
+  "noEngineReferences": false
+}

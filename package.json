@@ -1,0 +1,29 @@
+﻿{
+  "name": "com.aceland.lifecycle",
+  "version": "0.1.0",
+  "displayName": "AceLand Lifecycle",
+  "description": "Deterministic, dependency-ordered global initialization for Unity packages.\n\nAttributes only register; a topological sorter decides the real execution order.",
+  "unity": "2022.3",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/parsue/com.aceland.lifecycle.git"
+  },
+  "author": {
+    "name": "Parsue - AceLand Workshop",
+    "url": "https://www.parsue.io/",
+    "email": "parsue@gmail.com"
+  },
+  "keywords": [ 
+    "lifecycle",
+    "bootstrap",
+    "initialization",
+    "dependency"
+  ],
+  "publishConfig": {
+    "registry": "https://package.openupm.com"
+  },
+  "documentationUrl": "https://docs.parsue.io/aceland-unity-packages/packages/lifecycle-dev",
+  "type": "library",
+  "licensesUrl": "https://docs.parsue.io/aceland-unity-packages/getting-started/license",
+  "changelogUrl": ""
+}

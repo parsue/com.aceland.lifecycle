@@ -25,5 +25,12 @@
   "documentationUrl": "https://docs.parsue.io/aceland-unity-packages/packages/lifecycle-dev",
   "type": "library",
   "licensesUrl": "https://docs.parsue.io/aceland-unity-packages/getting-started/license",
-  "changelogUrl": ""
+  "changelogUrl": "",
+  "samples": [
+    {
+      "displayName": "Lifecycle Sample",
+      "description": "Simple lifecycle modules sample code",
+      "path": "Samples~/SampleLifecycle"
+    }
+  ]
 }

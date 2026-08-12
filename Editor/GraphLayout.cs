@@ -7,9 +7,9 @@ namespace AceLand.Lifecycle.Editor
     internal static class GraphLayout
     {
         private const float NODE_WIDTH = 220f;
-        private const float NODE_HEIGHT = 62f;
+        private const float NODE_HEIGHT = 76f;
 
-        private const float COLUMN_GAP = 90f;
+        private const float COLUMN_GAP = 110f;
         private const float ROW_GAP = 26f;
         private const float PHASE_GAP = 70f;
         private const float BAND_PADDING = 18f;

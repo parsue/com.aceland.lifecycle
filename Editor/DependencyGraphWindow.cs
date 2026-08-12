@@ -10,6 +10,28 @@ namespace AceLand.Lifecycle.Editor
         private const float MIN_ZOOM = 0.35f;
         private const float MAX_ZOOM = 1.6f;
         private const float SIDEBAR_WIDTH = 300f;
+        private const float ACCENT_WIDTH = 8f;
+        private const float QUIT_BADGE_WIDTH = 5f;
+        private const float PANEL_MIN = 90f;
+        private const float PANEL_MAX = 420f;
+        private const float SPLITTER = 5f;
+        
+        private const float EDGE_WIDTH = 2.5f;
+        private const float EDGE_WIDTH_HI = 4.5f;
+        private const float EDGE_HALO = 2f;
+        private const float ARROW_SIZE = 9f;
+        
+        private static readonly Color edgeNormal   = new(0.62f, 0.65f, 0.70f);
+        private static readonly Color edgeMuted    = new(0.30f, 0.31f, 0.34f);
+        private static readonly Color edgeUpstream = new(0.35f, 0.72f, 1.00f);
+        private static readonly Color edgeDownstrm = new(1.00f, 0.76f, 0.25f);
+        private static readonly Color edgeCycle    = new(1.00f, 0.28f, 0.22f);
+        private static readonly Color edgeHalo     = new(0.08f, 0.08f, 0.09f);
+
+        private readonly QuitPanel _quitPanel = new();
+        private bool _showQuitPanel = true;
+        private float _panelHeight = 150f;
+        private bool _draggingSplitter;
 
         private GraphData _data;
         private Vector2 _pan = Vector2.zero;
@@ -22,15 +44,15 @@ namespace AceLand.Lifecycle.Editor
         private string _search = string.Empty;
         private double _lastRepaint;
 
-        private readonly HashSet<Type> _highlightUp = new HashSet<Type>();
-        private readonly HashSet<Type> _highlightDown = new HashSet<Type>();
+        private readonly HashSet<Type> _highlightUp = new();
+        private readonly HashSet<Type> _highlightDown = new();
 
         [MenuItem("Tools/AceLand/Lifecycle/Dependency Graph", priority = 10)]
         public static void Open()
         {
             var w = GetWindow<DependencyGraphWindow>();
             w.titleContent = new GUIContent("Lifecycle Graph");
-            w.minSize = new Vector2(760f, 420f);
+            w.minSize = new Vector2(860f, 560f);
             w.Show();
         }
 
@@ -46,16 +68,27 @@ namespace AceLand.Lifecycle.Editor
             EditorApplication.playModeStateChanged -= OnPlayModeChanged;
             EditorApplication.update -= OnEditorUpdate;
         }
+        
+        private void OnPlayModeChanged(PlayModeStateChange state)
+        {
+            Rebuild();
 
-        private void OnPlayModeChanged(PlayModeStateChange _) => Rebuild();
+            // Statics survive Stop; force one paint so the final quit result is accurate.
+            if (state == PlayModeStateChange.EnteredEditMode)
+                EditorApplication.delayCall += Repaint;
+        }
 
         private void OnEditorUpdate()
         {
-            // Play 模式下每 0.5 秒刷新一次狀態顏色，成本可忽略。
-            if (!Application.isPlaying || !_liveMode) return;
-            if (EditorApplication.timeSinceStartup - _lastRepaint < 0.5) return;
+            if (!Application.isPlaying) return;
+
+            var quitting = ApplicationQuitPipeline.IsQuitting;
+            var interval = quitting ? 0.1 : 0.5;
+
+            if (EditorApplication.timeSinceStartup - _lastRepaint < interval) return;
             _lastRepaint = EditorApplication.timeSinceStartup;
-            Rebuild();
+
+            if (_liveMode) Rebuild();
             Repaint();
         }
 
@@ -79,14 +112,49 @@ namespace AceLand.Lifecycle.Editor
             DrawToolbar();
 
             var body = new Rect(0f, EditorStyles.toolbar.fixedHeight,
-                                position.width, position.height - EditorStyles.toolbar.fixedHeight);
+                position.width, position.height - EditorStyles.toolbar.fixedHeight);
 
-            var graphRect = new Rect(body.x, body.y, body.width - SIDEBAR_WIDTH, body.height);
-            var sideRect = new Rect(body.xMax - SIDEBAR_WIDTH, body.y, SIDEBAR_WIDTH, body.height);
+            var panelH = _showQuitPanel ? Mathf.Clamp(_panelHeight, PANEL_MIN, PANEL_MAX) : 0f;
+            var upperH = body.height - panelH - (_showQuitPanel ? SPLITTER : 0f);
+
+            var graphRect = new Rect(body.x, body.y, body.width - SIDEBAR_WIDTH, upperH);
+            var sideRect = new Rect(body.xMax - SIDEBAR_WIDTH, body.y, SIDEBAR_WIDTH, upperH);
 
             HandleInput(graphRect);
             DrawGraph(graphRect);
             DrawSidebar(sideRect);
+
+            if (!_showQuitPanel) return;
+
+            var splitRect = new Rect(body.x, graphRect.yMax, body.width, SPLITTER);
+            HandleSplitter(splitRect, body);
+
+            _quitPanel.Draw(new Rect(body.x, splitRect.yMax, body.width, panelH));
+        }
+
+        private void HandleSplitter(Rect rect, Rect body)
+        {
+            EditorGUI.DrawRect(rect, new Color(0.12f, 0.12f, 0.13f));
+            EditorGUIUtility.AddCursorRect(rect, MouseCursor.ResizeVertical);
+
+            var e = Event.current;
+
+            if (e.type == EventType.MouseDown && e.button == 0 && rect.Contains(e.mousePosition))
+            {
+                _draggingSplitter = true;
+                e.Use();
+            }
+            else if (e.type == EventType.MouseDrag && _draggingSplitter)
+            {
+                _panelHeight = Mathf.Clamp(body.yMax - e.mousePosition.y, PANEL_MIN, PANEL_MAX);
+                e.Use();
+                Repaint();
+            }
+            else if (e.type == EventType.MouseUp && _draggingSplitter)
+            {
+                _draggingSplitter = false;
+                e.Use();
+            }
         }
 
         private void DrawToolbar()
@@ -107,6 +175,16 @@ namespace AceLand.Lifecycle.Editor
                 GUILayout.Space(8f);
                 GUILayout.Label("Zoom", EditorStyles.miniLabel, GUILayout.Width(36f));
                 _zoom = GUILayout.HorizontalSlider(_zoom, MIN_ZOOM, MAX_ZOOM, GUILayout.Width(90f));
+                
+                GUILayout.Space(8f);
+
+                var quitting = Application.isPlaying && ApplicationQuitPipeline.IsQuitting;
+                var qc = GUI.color;
+                if (quitting) GUI.color = new Color(1f, 0.7f, 0.35f);
+                _showQuitPanel = GUILayout.Toggle(_showQuitPanel,
+                    quitting ? $"Quit ▸ {ApplicationQuitPipeline.Phase}" : "Quit",
+                    EditorStyles.toolbarButton, GUILayout.Width(quitting ? 170f : 46f));
+                GUI.color = qc;
 
                 GUILayout.FlexibleSpace();
 
@@ -208,7 +286,7 @@ namespace AceLand.Lifecycle.Editor
             => (screen - graphRect.position - _pan) / _zoom;
 
         private Rect WorldToScreen(Rect world, Rect graphRect)
-            => new Rect(world.x * _zoom + _pan.x + graphRect.x,
+            => new(world.x * _zoom + _pan.x + graphRect.x,
                         world.y * _zoom + _pan.y + graphRect.y,
                         world.width * _zoom,
                         world.height * _zoom);
@@ -251,7 +329,7 @@ namespace AceLand.Lifecycle.Editor
             foreach (var band in _data.Bands)
             {
                 var r = WorldToScreen(band.Rect, local);
-                EditorGUI.DrawRect(r, PhaseColor(band.Phase) * new Color(1f, 1f, 1f, 0.10f));
+                EditorGUI.DrawRect(r, PhaseColor(band.Phase) * new Color(1f, 1f, 1f, 0.07f));
 
                 var header = new Rect(r.x + 8f, r.y + 4f, r.width - 16f, 20f);
                 var style = new GUIStyle(EditorStyles.boldLabel)
@@ -262,18 +340,27 @@ namespace AceLand.Lifecycle.Editor
                 GUI.Label(header, $"{band.Phase}  ({band.Count})  ·  {PhaseHint(band.Phase)}", style);
             }
 
-            // Edges
+            // Edges — two passes so highlighted edges are never buried.
             Handles.BeginGUI();
+
+            var highlighted = new List<(GraphNode from, GraphNode to)>();
+
             foreach (var n in _data.Nodes)
             {
                 foreach (var d in n.DependsOn)
                 {
                     if (d == null) continue;
+
                     var dep = _data.Nodes.Find(x => x.Id == d);
                     if (dep == null) continue;
-                    DrawEdge(dep, n, local);
+
+                    if (IsEdgeHighlighted(dep, n)) highlighted.Add((dep, n));
+                    else DrawEdge(dep, n, local);
                 }
             }
+
+            foreach (var (from, to) in highlighted) DrawEdge(from, to, local);
+
             Handles.EndGUI();
 
             // Nodes
@@ -281,6 +368,24 @@ namespace AceLand.Lifecycle.Editor
 
             GUI.EndClip();
         }
+        
+        private bool IsEdgeHighlighted(GraphNode from, GraphNode to)
+        {
+            if (_data.CycleMembers.Contains(from.Id) && _data.CycleMembers.Contains(to.Id))
+                return true;
+
+            if (_selected == null) return false;
+
+            return IsUpstreamEdge(from, to) || IsDownstreamEdge(from, to);
+        }
+
+        private bool IsUpstreamEdge(GraphNode from, GraphNode to)
+            => _highlightUp.Contains(from.Id) &&
+               (to.Id == _selected.Id || _highlightUp.Contains(to.Id));
+
+        private bool IsDownstreamEdge(GraphNode from, GraphNode to)
+            => _highlightDown.Contains(to.Id) &&
+               (from.Id == _selected.Id || _highlightDown.Contains(from.Id));
 
         private void DrawGrid(Rect rect)
         {
@@ -304,37 +409,74 @@ namespace AceLand.Lifecycle.Editor
 
             var start = new Vector3(a.xMax, a.center.y);
             var end = new Vector3(b.xMin, b.center.y);
+
+            // Cull off-screen edges before any curve work.
+            var span = Rect.MinMaxRect(
+                Mathf.Min(start.x, end.x) - 4f, Mathf.Min(start.y, end.y) - 4f,
+                Mathf.Max(start.x, end.x) + 4f, Mathf.Max(start.y, end.y) + 4f);
+            if (!span.Overlaps(local)) return;
+
             var tangent = Mathf.Max(40f, Mathf.Abs(end.x - start.x) * 0.5f);
+            var c0 = start + Vector3.right * tangent;
+            var c1 = end + Vector3.left * tangent;
 
-            var color = new Color(1f, 1f, 1f, 0.22f);
-            var width = 2f;
+            Color color;
+            bool emphasise;
 
-            var cyc = _data.CycleMembers.Contains(from.Id) && _data.CycleMembers.Contains(to.Id);
-            if (cyc) { color = new Color(1f, 0.3f, 0.25f, 0.95f); width = 3f; }
-            else if (_selected != null)
+            if (_data.CycleMembers.Contains(from.Id) && _data.CycleMembers.Contains(to.Id))
             {
-                var up = to.Id == _selected.Id || (_highlightUp.Contains(to.Id) && _highlightUp.Contains(from.Id))
-                                               || (to.Id == _selected.Id);
-                var down = from.Id == _selected.Id || _highlightDown.Contains(from.Id);
-
-                if (up && (_highlightUp.Contains(from.Id) || to.Id == _selected.Id))
-                {
-                    color = new Color(0.4f, 0.75f, 1f, 0.95f); width = 3f;
-                }
-                else if (down)
-                {
-                    color = new Color(1f, 0.8f, 0.35f, 0.9f); width = 3f;
-                }
-                else
-                {
-                    color = new Color(1f, 1f, 1f, 0.08f);
-                }
+                color = edgeCycle;
+                emphasise = true;
+            }
+            else if (_selected == null)
+            {
+                color = edgeNormal;
+                emphasise = false;
+            }
+            else if (IsUpstreamEdge(from, to))
+            {
+                color = edgeUpstream;
+                emphasise = true;
+            }
+            else if (IsDownstreamEdge(from, to))
+            {
+                color = edgeDownstrm;
+                emphasise = true;
+            }
+            else
+            {
+                color = edgeMuted;
+                emphasise = false;
             }
 
-            Handles.DrawBezier(start, end,
-                               start + Vector3.right * tangent,
-                               end + Vector3.left * tangent,
-                               color, null, width);
+            // Zoom-scaled, floored so lines never thin out to nothing.
+            var scale = Mathf.Clamp(_zoom, 0.7f, 1.3f);
+            var width = (emphasise ? EDGE_WIDTH_HI : EDGE_WIDTH) * scale;
+
+            // Dark halo underneath separates the line from grid and bands.
+            if (emphasise || _selected == null)
+                Handles.DrawBezier(start, end, c0, c1, edgeHalo, null, width + EDGE_HALO * scale);
+
+            Handles.DrawBezier(start, end, c0, c1, color, null, width);
+
+            DrawArrowHead(end, c1, color, emphasise, scale);
+        }
+
+        private static void DrawArrowHead(Vector3 tip, Vector3 control, Color color,
+                                          bool emphasise, float scale)
+        {
+            var dir = (tip - control).normalized;
+            if (dir.sqrMagnitude < 0.0001f) dir = Vector3.right;
+
+            var size = ARROW_SIZE * scale * (emphasise ? 1.15f : 1f);
+            var normal = new Vector3(-dir.y, dir.x, 0f);
+            var back = tip - dir * size;
+
+            Handles.color = color;
+            Handles.DrawAAConvexPolygon(
+                tip,
+                back + normal * (size * 0.45f),
+                back - normal * (size * 0.45f));
         }
 
         private void DrawNode(GraphNode n, Rect local)
@@ -349,13 +491,24 @@ namespace AceLand.Lifecycle.Editor
             var bg = new Color(0.22f, 0.23f, 0.25f, dimmed ? 0.35f : 1f);
 
             EditorGUI.DrawRect(r, bg);
-            EditorGUI.DrawRect(new Rect(r.x, r.y, 4f * _zoom, r.height), accent);
+            EditorGUI.DrawRect(new Rect(r.x, r.y, ACCENT_WIDTH * _zoom, r.height), accent);
 
-            // border
-            var outline = _selected != null && _selected.Id == n.Id
-                ? Color.white
-                : (_data.CycleMembers.Contains(n.Id) ? new Color(1f, 0.3f, 0.25f) : new Color(0f, 0f, 0f, 0.6f));
-            DrawOutline(r, outline, _selected != null && _selected.Id == n.Id ? 2f : 1f);
+            DrawQuitBadges(n, r);
+
+            var selected = _selected != null && _selected.Id == n.Id;
+            var inCycle = _data.CycleMembers.Contains(n.Id);
+            var inert = n.IsQuitBlocker && n.State == ModuleState.Ready && !n.BlockerRegistered;
+            var notOptedIn = !n.AssemblyOptedIn && n.State == ModuleState.Declared;
+
+            Color outline;
+            float outlineW;
+
+            if (selected) { outline = Color.white; outlineW = 2f; }
+            else if (inCycle) { outline = new Color(1f, 0.3f, 0.25f); outlineW = 2f; }
+            else if (notOptedIn || inert) { outline = new Color(1f, 0.35f, 0.2f); outlineW = 2f; }
+            else { outline = new Color(0f, 0f, 0f, 0.6f); outlineW = 1f; }
+
+            DrawOutline(r, outline, outlineW);
 
             if (_zoom < 0.5f) return;
 
@@ -374,33 +527,64 @@ namespace AceLand.Lifecycle.Editor
             };
 
             var pad = 8f * _zoom;
-            GUI.Label(new Rect(r.x + pad + 4f, r.y + 4f * _zoom, r.width - pad * 2f, 18f * _zoom),
-                      n.DisplayName, nodeTitle);
+            var x = r.x + pad + ACCENT_WIDTH * _zoom;
+            var w = r.width - pad * 2f - ACCENT_WIDTH * _zoom - QUIT_BADGE_WIDTH * _zoom;
+
+            GUI.Label(new Rect(x, r.y + 4f * _zoom, w, 18f * _zoom), n.DisplayName, nodeTitle);
 
             var line2 = n.SortIndex >= 0
                 ? $"#{n.SortIndex:00}  {n.State}  {n.InitMilliseconds:0.00} ms"
                 : $"{n.State}   order {n.Order}";
-            GUI.Label(new Rect(r.x + pad + 4f, r.y + 22f * _zoom, r.width - pad * 2f, 16f * _zoom),
-                      line2, sub);
+            GUI.Label(new Rect(x, r.y + 22f * _zoom, w, 16f * _zoom), line2, sub);
 
+            // Row 3: tags.
             var tags = string.Empty;
             if (n.IsAsync) tags += "async  ";
+            if (n.IsQuitBlocker) tags += n.BlockerIsBusy ? "BUSY  " : "blocker  ";
+            if (n.IsQuitHandler) tags += n.HasQuitOrder ? $"quit[{n.QuitOrder}]  " : "quit  ";
             if (n.LiveOnly) tags += "manual  ";
             if (!n.AutoRegister && !n.LiveOnly) tags += "no-autoreg  ";
-            if (!n.AssemblyOptedIn && n.State == ModuleState.Declared)
-            {
-                DrawOutline(r, new Color(1f, 0.35f, 0.2f), 2f);
-                var warn = new GUIStyle(EditorStyles.miniLabel)
-                {
-                    fontSize = Mathf.Max(9, fs - 2),
-                    normal = { textColor = new Color(1f, 0.45f, 0.3f) },
-                };
-                GUI.Label(new Rect(r.x + pad + 4f, r.y + 38f * _zoom, r.width - pad * 2f, 16f * _zoom),
-                    "⚠ assembly not opted in", warn);
-            }
+
             if (tags.Length > 0)
-                GUI.Label(new Rect(r.x + pad + 4f, r.y + 38f * _zoom, r.width - pad * 2f, 16f * _zoom),
-                          tags, sub);
+                GUI.Label(new Rect(x, r.y + 38f * _zoom, w, 16f * _zoom), tags, sub);
+
+            // Row 4: warnings — previously collided with the tag row.
+            var warning = notOptedIn ? "⚠ assembly not opted in"
+                        : inert ? "⚠ blocker not registered"
+                        : null;
+
+            if (warning == null) return;
+
+            var warn = new GUIStyle(EditorStyles.miniLabel)
+            {
+                fontSize = Mathf.Max(9, fs - 2),
+                normal = { textColor = new Color(1f, 0.45f, 0.3f) },
+                clipping = TextClipping.Clip,
+            };
+            GUI.Label(new Rect(x, r.y + 54f * _zoom, w, 16f * _zoom), warning, warn);
+        }
+
+        private void DrawQuitBadges(GraphNode n, Rect r)
+        {
+            var segments = new List<Color>(2);
+
+            if (n.IsQuitHandler) segments.Add(new Color(0.85f, 0.6f, 1f));
+
+            if (n.IsQuitBlocker)
+            {
+                if (n.BlockerIsBusy) segments.Add(new Color(1f, 0.65f, 0.25f));
+                else if (n.BlockerRegistered || n.State == ModuleState.Declared)
+                    segments.Add(new Color(0.35f, 0.75f, 0.72f));
+                else segments.Add(new Color(0.5f, 0.5f, 0.52f));
+            }
+
+            if (segments.Count == 0) return;
+
+            var w = QUIT_BADGE_WIDTH * _zoom;
+            var h = r.height / segments.Count;
+
+            for (var i = 0; i < segments.Count; i++)
+                EditorGUI.DrawRect(new Rect(r.xMax - w, r.y + h * i, w, h), segments[i]);
         }
 
         private static void DrawOutline(Rect r, Color c, float w)
@@ -430,11 +614,59 @@ namespace AceLand.Lifecycle.Editor
 
             EditorGUILayout.LabelField("Inspector", EditorStyles.boldLabel);
 
+            if (_selected != null)
+            {
+                if (_selected.IsQuitBlocker || _selected.IsQuitHandler)
+                {
+                    EditorGUILayout.Space(6f);
+                    EditorGUILayout.LabelField("Quit Pipeline", EditorStyles.boldLabel);
+
+                    if (_selected.IsQuitHandler)
+                    {
+                        Row("Handler", "IQuitHandler");
+                        Row("Quit order", _selected.HasQuitOrder
+                            ? _selected.QuitOrder.ToString()
+                            : "0  (reverse init)");
+                    }
+
+                    if (_selected.IsQuitBlocker)
+                    {
+                        Row("Blocker", "IQuitBlocker");
+
+                        if (Application.isPlaying)
+                        {
+                            Row("Registered", _selected.BlockerRegistered ? "yes" : "NO");
+                            Row("Busy", _selected.BlockerIsBusy ? "YES — blocking" : "idle");
+
+                            if (!string.IsNullOrEmpty(_selected.BlockerReason))
+                                EditorGUILayout.LabelField(_selected.BlockerReason,
+                                    EditorStyles.wordWrappedMiniLabel);
+
+                            if (!_selected.BlockerRegistered && _selected.State == ModuleState.Ready)
+                                EditorGUILayout.HelpBox(
+                                    "Implements IQuitBlocker but AddBlocker() was never called. " +
+                                    "Call it from Initialize().", MessageType.Error);
+                            else if (!_selected.BlockerIsBusy)
+                                EditorGUILayout.HelpBox(
+                                    "Registered but idle. It will not hold a quit until IsBusy returns true.",
+                                    MessageType.Info);
+                        }
+                        else
+                        {
+                            Row("Registered", "(play mode only)");
+                        }
+                    }
+                }
+            }
+
             if (_selected == null)
             {
                 EditorGUILayout.HelpBox(
                     "Click a node to inspect.\n\n" +
-                    "Drag: middle mouse / alt+left\nZoom: scroll wheel\nDouble click: ping script",
+                    "Drag: middle mouse / alt+left\n" +
+                    "Zoom: scroll wheel\n" +
+                    "Double click: open script\n" +
+                    "Right click: context menu",
                     MessageType.Info);
                 GUILayout.EndArea();
                 return;

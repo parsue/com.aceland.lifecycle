@@ -10,6 +10,7 @@ namespace AceLand.Lifecycle
     {
         private static GameObject _root;
         private static LifecycleHostBehaviour _behaviour;
+        private const string HOST_NAME = "[AceLand Lifecycle]";
 
         public static GameObject Root
         {
@@ -32,10 +33,18 @@ namespace AceLand.Lifecycle
             if (_root != null) return;
             if (!Application.isPlaying) return;
 
-            _root = new GameObject("[AceLand Lifecycle]")
+            // A mid-play domain reload nulls our statics while the GameObject survives.
+            // Adopt it instead of creating a duplicate.
+            var existing = GameObject.Find(HOST_NAME);
+            if (existing != null)
             {
-                hideFlags = HideFlags.NotEditable
-            };
+                _root = existing;
+                _behaviour = existing.GetComponent<LifecycleHostBehaviour>()
+                              ?? existing.AddComponent<LifecycleHostBehaviour>();
+                return;
+            }
+
+            _root = new GameObject(HOST_NAME) { hideFlags = HideFlags.NotEditable };
             Object.DontDestroyOnLoad(_root);
             _behaviour = _root.AddComponent<LifecycleHostBehaviour>();
         }

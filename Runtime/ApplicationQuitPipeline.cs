@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using UnityEngine;
 #if UNITY_EDITOR
@@ -23,7 +24,7 @@ namespace AceLand.Lifecycle
         // ── Settings ────────────────────────────────────────────────────────
 
         /// <summary>Overall timeout (seconds). &lt;= 0 means infinite. After the timeout the pipeline forces its way forward so the app can never get stuck.</summary>
-        private const float TIMEOUT_SECONDS = 30f;
+        internal const float TIMEOUT_SECONDS = 30f;
 
         /// <summary>Polling interval while waiting for blockers.</summary>
         private const int BLOCKER_POLL_MILLISECONDS = 50;
@@ -42,7 +43,25 @@ namespace AceLand.Lifecycle
         /// <summary>Raised once when a blocker holds up the quit; the argument is the BusyReason. Hook your toast here.</summary>
         public static event Action<string> QuitBlocked;
         public static event Action QuitCompleted;
+        
+        private static DateTime? s_CompletedAtUtc;
 
+        public static bool IsActive => Phase is QuitPhase.WaitingForBlockers
+            or QuitPhase.RunningHandlers
+            or QuitPhase.ShuttingDown;
+
+        public static bool HasResult => Phase is QuitPhase.Completed or QuitPhase.Forced;
+        
+        public static double ElapsedSeconds
+        {
+            get
+            {
+                if (!_startedAtUtc.HasValue) return 0d;
+                var end = s_CompletedAtUtc ?? DateTime.UtcNow;
+                return (end - _startedAtUtc.Value).TotalSeconds;
+            }
+        }
+        
         // ── Registration ────────────────────────────────────────────────────
 
         internal sealed class HandlerEntry
@@ -178,11 +197,8 @@ namespace AceLand.Lifecycle
                 _requestCount++;
                 if (ALLOW_FORCE_QUIT_ON_SECOND_REQUEST && _requestCount >= 2)
                 {
-                    LifecycleLog.Warning("Force quit requested — aborting graceful shutdown.");
-                    IsReadyToQuit = true;
-                    ModuleRegistry.ShutdownAll();
-                    LifecycleToken.SignalDead();
-                    return;   // Stop intercepting and let it leave Play Mode
+                    MarkForced();          // ★ was: Warning + IsReadyToQuit + ShutdownAll + SignalDead
+                    return;                // don't intercept — let it leave Play Mode
                 }
             }
 
@@ -215,8 +231,7 @@ namespace AceLand.Lifecycle
                 _requestCount++;
                 if (ALLOW_FORCE_QUIT_ON_SECOND_REQUEST && _requestCount >= 2)
                 {
-                    LifecycleLog.Warning("Force quit requested — aborting graceful shutdown.");
-                    IsReadyToQuit = true;
+                    MarkForced();          // ★ was: Warning + IsReadyToQuit only
                     return true;
                 }
                 return false;
@@ -245,33 +260,55 @@ namespace AceLand.Lifecycle
             if (IsQuitting) return;
             IsQuitting = true;
 
+            _startedAtUtc = DateTime.UtcNow;
+            s_CompletedAtUtc = null;
+            CurrentHandler = null;
+
             var ctx = new QuitContext
             {
                 Token = LifecycleToken.ApplicationAlive,
-                StartedAtUtc = DateTime.UtcNow,
+                StartedAtUtc = _startedAtUtc.Value,
                 TimeoutSeconds = TIMEOUT_SECONDS,
             };
 
-            LifecycleToken.SignalQuitting();   // The game loop stops immediately; ApplicationAlive is still alive
+            LifecycleToken.SignalQuitting();
             ctx.SetStatus("Pending to quit ...");
 
             try { QuitStarted?.Invoke(ctx); }
             catch (Exception ex) { LifecycleLog.Exception(ex); }
 
+            // Freeze the plan so the panel shows a stable list.
+            var plan = BuildPlan();
+            _activeSteps = new List<QuitStepInfo>(plan.Count);
+            foreach (var e in plan)
+                _activeSteps.Add(new QuitStepInfo
+                {
+                    Name = e.Name,
+                    Order = e.Order,
+                    FromModule = e.FromModule,
+                    State = QuitStepState.Pending,
+                });
+
+            Phase = QuitPhase.WaitingForBlockers;
             await WaitForBlockers(ctx);
 
-            var plan = BuildPlan();
-            foreach (var t in plan)
-                await RunHandler(t, ctx);
+            Phase = QuitPhase.RunningHandlers;
+            for (var i = 0; i < plan.Count; i++)
+                await RunHandler(plan[i], ctx, _activeSteps[i]);
 
+            CurrentHandler = null;
+            Phase = QuitPhase.ShuttingDown;
             ctx.SetStatus("Shutting down modules ...");
             ModuleRegistry.ShutdownAll();
 
+            Phase = QuitPhase.Completed;
+            s_CompletedAtUtc = DateTime.UtcNow;
             ctx.SetStatus("Safe to quit.");
+
             try { QuitCompleted?.Invoke(); }
             catch (Exception ex) { LifecycleLog.Exception(ex); }
 
-            LifecycleToken.SignalDead();       // Only now do we let ApplicationAlive die
+            LifecycleToken.SignalDead();
         }
 
         private static async Task WaitForBlockers(QuitContext ctx)
@@ -301,43 +338,59 @@ namespace AceLand.Lifecycle
             }
         }
 
-        private static async Task RunHandler(HandlerEntry entry, QuitContext ctx)
+        private static async Task RunHandler(HandlerEntry entry, QuitContext ctx, QuitStepInfo step)
         {
             if (ctx.IsTimedOut)
             {
+                step.State = QuitStepState.Skipped;
                 LifecycleLog.Error($"Skip quit handler '{entry.Name}' — pipeline already timed out.");
                 return;
             }
 
+            CurrentHandler = entry.Name;
+            step.State = QuitStepState.Running;
+
+            LifecycleLog.Info($"Quit handler ► {entry.Name}");
+            var sw = Stopwatch.StartNew();
+
             try
             {
                 var task = entry.Run(ctx);
-                if (task == null) return;
+                if (task == null) { step.State = QuitStepState.Done; return; }
 
                 if (ctx.HasTimeout && !task.IsCompleted)
                 {
                     var finished = await Task.WhenAny(task, Task.Delay(ctx.Remaining));
                     if (finished != task)
                     {
+                        step.State = QuitStepState.TimedOut;
                         LifecycleLog.Error($"Quit handler '{entry.Name}' timed out; continuing.");
-                        // Observe the abandoned task to avoid an UnobservedTaskException
                         _ = task.ContinueWith(t =>
-                            {
-                                if (t.Exception != null) LifecycleLog.Exception(t.Exception);
-                            }, TaskScheduler.Default);
+                        {
+                            if (t.Exception != null) LifecycleLog.Exception(t.Exception);
+                        }, TaskScheduler.Default);
                         return;
                     }
                 }
 
                 await task;
+                step.State = QuitStepState.Done;
             }
             catch (OperationCanceledException)
             {
+                step.State = QuitStepState.Skipped;
                 LifecycleLog.Warning($"Quit handler '{entry.Name}' cancelled.");
             }
             catch (Exception ex)
             {
+                step.State = QuitStepState.Failed;
                 LifecycleLog.Exception(new Exception($"[Lifecycle] Quit handler '{entry.Name}' failed.", ex));
+            }
+            finally
+            {
+                sw.Stop();
+                step.Milliseconds = sw.Elapsed.TotalMilliseconds;
+                LifecycleLog.Info($"Quit handler ◄ {entry.Name}  ({sw.ElapsedMilliseconds} ms)");
             }
         }
 
@@ -408,6 +461,30 @@ namespace AceLand.Lifecycle
             StatusChanged = null;
             QuitBlocked = null;
             QuitCompleted = null;
+            _activeSteps = null;
+            _startedAtUtc = null;
+            s_CompletedAtUtc = null;
+            Phase = QuitPhase.Idle;
+            CurrentHandler = null;
+        }
+        
+        /// <summary>
+        /// Clears the diagnostics of a finished run. Does nothing while a quit is in flight.
+        /// Registrations and event subscriptions are untouched.
+        /// </summary>
+        public static void ClearDiagnostics()
+        {
+            if (IsActive) return;
+
+            _activeSteps = null;
+            _startedAtUtc = null;
+            s_CompletedAtUtc = null;
+            Phase = QuitPhase.Idle;
+            CurrentHandler = null;
+            CurrentStatus = null;
+            IsQuitting = false;
+            IsReadyToQuit = false;
+            _requestCount = 0;
         }
 
         // ── helpers ────────────────────────────────────────────────────────
@@ -436,6 +513,137 @@ namespace AceLand.Lifecycle
             private readonly Action _action;
             public Disposable(Action action) => _action = action;
             public void Dispose() => _action?.Invoke();
+        }
+        
+        /// <summary>
+        /// Abandons a graceful shutdown in progress. Cancels the alive token first so
+        /// in-flight handlers unwind, then tears modules down.
+        /// </summary>
+        private static void MarkForced()
+        {
+            LifecycleLog.Warning("Force quit requested — aborting graceful shutdown.");
+
+            IsReadyToQuit = true;
+            Phase = QuitPhase.Forced;
+            s_CompletedAtUtc = DateTime.UtcNow;
+            CurrentHandler = null;
+
+            LifecycleToken.SignalDead();
+            ModuleRegistry.ShutdownAll();
+        }
+        
+        // ── Diagnostics types ───────────────────────────────────────────────
+
+        public enum QuitPhase
+        {
+            Idle = 0,
+            WaitingForBlockers,
+            RunningHandlers,
+            ShuttingDown,
+            Completed,
+            Forced,
+        }
+
+        public enum QuitStepState
+        {
+            Pending = 0,
+            Running,
+            Done,
+            Failed,
+            TimedOut,
+            Skipped,
+        }
+
+        public sealed class QuitStepInfo
+        {
+            public string Name;
+            public int Order;
+            public bool FromModule;
+            public QuitStepState State;
+            public double Milliseconds;
+        }
+
+        public sealed class QuitBlockerInfo
+        {
+            public IQuitBlocker Blocker;
+            public string Name;
+            public bool IsBusy;
+            public string Reason;
+        }
+
+        // ── Diagnostics state ───────────────────────────────────────────────
+
+        private static List<QuitStepInfo> _activeSteps;
+        private static DateTime? _startedAtUtc;
+
+        public static QuitPhase Phase { get; private set; } = QuitPhase.Idle;
+        public static string CurrentHandler { get; private set; }
+
+        /// <summary>Remaining budget in seconds; -1 when unlimited.</summary>
+        public static double RemainingSeconds
+        {
+            get
+            {
+                if (TIMEOUT_SECONDS <= 0f) return -1d;
+                return Math.Max(0d, TIMEOUT_SECONDS - ElapsedSeconds);
+            }
+        }
+
+        /// <summary>True when the given instance is currently registered as a blocker.</summary>
+        public static bool IsBlockerRegistered(object instance)
+        {
+            if (instance == null) return false;
+            for (var i = 0; i < blockers.Count; i++)
+                if (ReferenceEquals(blockers[i], instance)) return true;
+            return false;
+        }
+
+        /// <summary>Blocker snapshot. User property exceptions are contained.</summary>
+        public static IReadOnlyList<QuitBlockerInfo> GetBlockers()
+        {
+            var result = new List<QuitBlockerInfo>(blockers.Count);
+
+            foreach (var b in blockers)
+            {
+                if (b == null) continue;
+
+                var info = new QuitBlockerInfo { Blocker = b, Name = b.GetType().Name };
+
+                try { info.IsBusy = b.IsBusy; }
+                catch (Exception ex) { info.Reason = $"IsBusy threw: {ex.Message}"; }
+
+                if (info.Reason == null)
+                {
+                    try { info.Reason = b.BusyReason; }
+                    catch (Exception ex) { info.Reason = $"BusyReason threw: {ex.Message}"; }
+                }
+
+                result.Add(info);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// The handler plan. While quitting this is the frozen plan with live per-step state;
+        /// otherwise it is a fresh preview with every step Pending.
+        /// </summary>
+        public static IReadOnlyList<QuitStepInfo> GetSteps()
+        {
+            if (_activeSteps != null) return _activeSteps;
+
+            var plan = BuildPlan();
+            var preview = new List<QuitStepInfo>(plan.Count);
+            foreach (var e in plan)
+                preview.Add(new QuitStepInfo
+                {
+                    Name = e.Name,
+                    Order = e.Order,
+                    FromModule = e.FromModule,
+                    State = QuitStepState.Pending,
+                });
+
+            return preview;
         }
     }
 }

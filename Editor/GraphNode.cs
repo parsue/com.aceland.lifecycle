@@ -28,6 +28,17 @@ namespace AceLand.Lifecycle.Editor
 
         public readonly List<GraphNode> Dependents = new List<GraphNode>();
         public Rect Rect;
+        
+        // ── Quit pipeline ──
+        public bool IsQuitHandler;
+        public bool IsQuitBlocker;
+        public int QuitOrder;
+        public bool HasQuitOrder;
+
+        /// <summary>Live only: AddBlocker was actually called for this instance.</summary>
+        public bool BlockerRegistered;
+        public bool BlockerIsBusy;
+        public string BlockerReason;
     }
 
     internal sealed class PhaseBand

@@ -38,6 +38,21 @@ namespace AceLand.Lifecycle
             ModuleRegistry.ResetStatics();
             LifecycleToken.ResetStatics();
         }
+
+        [UnityEditor.Callbacks.DidReloadScripts]
+        private static void OnScriptsReloaded()
+        {
+            if (!Application.isPlaying) return;
+            if (ModuleRegistry.Entries.Count > 0) return;
+
+            LifecycleLog.Error(
+                "Scripts recompiled during Play Mode. All lifecycle statics were reset while scene " +
+                "objects survived — no module is registered and Get<T>() will throw.\n" +
+                "Stop and re-enter Play Mode. To avoid this, set Preferences ▸ General ▸ " +
+                "Script Changes While Playing to 'Recompile After Finished Playing'.");
+
+            LifecycleHost.EnsureHost();   // adopt the orphan so a duplicate isn't created later
+        }
 #endif
     }
 }

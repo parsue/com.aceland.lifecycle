@@ -50,7 +50,7 @@ namespace AceLand.Lifecycle.Editor
 
         public static void Ping(Type type)
         {
-            if (TryFind(type, out var script))
+            if (TryFind(type, out var script) && script != null)
             {
                 EditorGUIUtility.PingObject(script);
                 Selection.activeObject = script;

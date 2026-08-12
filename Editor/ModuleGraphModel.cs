@@ -30,6 +30,8 @@ namespace AceLand.Lifecycle.Editor
                 
                 var asm = t.Assembly;
                 var optedIn = asm.GetCustomAttributes(typeof(LifecycleAssemblyAttribute), false).Length > 0;
+                var quitOrder = (QuitOrderAttribute)Attribute.GetCustomAttribute(
+                    t, typeof(QuitOrderAttribute));
 
                 var node = new GraphNode
                 {
@@ -44,6 +46,10 @@ namespace AceLand.Lifecycle.Editor
                     State = ModuleState.Declared,
                     AssemblyName = asm.GetName().Name,
                     AssemblyOptedIn = optedIn,
+                    IsQuitHandler = typeof(IQuitHandler).IsAssignableFrom(t),
+                    IsQuitBlocker = typeof(IQuitBlocker).IsAssignableFrom(t),
+                    QuitOrder = quitOrder?.Order ?? 0,
+                    HasQuitOrder = quitOrder != null,
                 };
                 
                 if (!optedIn && attr.AutoRegister)
@@ -81,6 +87,27 @@ namespace AceLand.Lifecycle.Editor
                     node.Error = e.Error;
                     node.InitMilliseconds = e.InitMilliseconds;
                     node.SortIndex = e.SortIndex;
+                    
+                    node.IsQuitHandler = e.Module is IQuitHandler;
+                    node.IsQuitBlocker = e.Module is IQuitBlocker;
+
+                    if (e.Module is IQuitBlocker blocker)
+                    {
+                        node.BlockerRegistered = ApplicationQuitPipeline.IsBlockerRegistered(blocker);
+
+                        try { node.BlockerIsBusy = blocker.IsBusy; }
+                        catch (Exception ex) { node.BlockerReason = $"IsBusy threw: {ex.Message}"; }
+
+                        if (node.BlockerReason == null)
+                        {
+                            try { node.BlockerReason = blocker.BusyReason; }
+                            catch (Exception ex) { node.BlockerReason = $"BusyReason threw: {ex.Message}"; }
+                        }
+
+                        if (!node.BlockerRegistered && e.State == ModuleState.Ready)
+                            AddIssue(data, $"'{node.DisplayName}' implements IQuitBlocker but never called " +
+                                           "ApplicationQuitPipeline.AddBlocker() — it will never block a quit.");
+                    }
                 }
 
                 foreach (var issue in ModuleRegistry.Issues) data.Issues.Add(issue);

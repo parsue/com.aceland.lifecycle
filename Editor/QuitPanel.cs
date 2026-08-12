@@ -200,9 +200,13 @@ namespace AceLand.Lifecycle.Editor
 
                 if (!string.IsNullOrEmpty(b.Reason))
                 {
-                    var reason = GUILayoutUtility.GetRect(rect.width - 20f, ROW_HEIGHT - 3f);
-                    EditorGUI.LabelField(new Rect(reason.x + 14f, reason.y, reason.width - 14f, reason.height),
-                                         FirstLine(b.Reason), EditorStyles.miniLabel);
+                    var reasonStyle = new GUIStyle(EditorStyles.miniLabel) { wordWrap = true };
+                    var w = rect.width - 34f;
+                    var h = reasonStyle.CalcHeight(new GUIContent(b.Reason), w);
+
+                    var reason = GUILayoutUtility.GetRect(w, Mathf.Min(h, 34f));
+                    EditorGUI.LabelField(new Rect(reason.x + 14f, reason.y, w, reason.height),
+                        b.Reason, reasonStyle);
                 }
             }
 
@@ -284,7 +288,7 @@ namespace AceLand.Lifecycle.Editor
             return i < 0 ? text : text.Substring(0, i) + " …";
         }
 
-        private static Color PhaseColor(ApplicationQuitPipeline.QuitPhase p)
+        internal static Color PhaseColor(ApplicationQuitPipeline.QuitPhase p)
         {
             switch (p)
             {
@@ -297,7 +301,7 @@ namespace AceLand.Lifecycle.Editor
             }
         }
 
-        private static Color StepColor(ApplicationQuitPipeline.QuitStepState s)
+        internal static Color StepColor(ApplicationQuitPipeline.QuitStepState s)
         {
             switch (s)
             {

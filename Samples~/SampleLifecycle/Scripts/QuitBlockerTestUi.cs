@@ -2,7 +2,6 @@
 using System.Threading;
 using System.Threading.Tasks;
 using AceLand.Lifecycle;
-using AceLand.Sample.LifeCycle.Scripts.Modules;
 using UnityEngine;
 using Random = UnityEngine.Random;
 
@@ -10,13 +9,6 @@ namespace AceLand.Sample.LifeCycle.Scripts
 {
     public class QuitBlockerTestUi : ModuleTester
     {
-        private QuitBlockerModule blocker;
-
-        protected override void Start()
-        {
-            blocker = ModuleRegistry.Get<QuitBlockerModule>();
-        }
-
         protected override void RunTest()
         {
             var countdown = Random.Range(5, 10);
@@ -32,9 +24,15 @@ namespace AceLand.Sample.LifeCycle.Scripts
         /// </summary>
         private async Task StartBlockJob(int countdown, CancellationToken token)
         {
+            if (!ApplicationQuitPipeline.TryBeginWork("Test Block Job", out var scope))
+            {
+                Debug.LogWarning("Quit in progress — new blocker rejected.");
+                return;
+            }
+
             try
             {
-                using (blocker.BeginJob())
+                using (scope)
                 {
                     Debug.Log($"Fake job started — quit is now blocked for {countdown}s");
                     while (countdown > 0)

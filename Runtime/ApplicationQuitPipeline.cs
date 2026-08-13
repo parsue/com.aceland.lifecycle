@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Text;
 using System.Threading.Tasks;
 using UnityEngine;
 #if UNITY_EDITOR
@@ -44,7 +45,13 @@ namespace AceLand.Lifecycle
         public static event Action<string> QuitBlocked;
         public static event Action QuitCompleted;
         
-        private static DateTime? s_CompletedAtUtc;
+        /// <summary>
+        /// When false (default) new busy scopes are rejected once a quit has started, and
+        /// blockers registered after that point are not waited on.
+        /// </summary>
+        public static bool AllowNewWorkWhileQuitting = false;
+        
+        private static DateTime? _completedAtUtc;
 
         public static bool IsActive => Phase is QuitPhase.WaitingForBlockers
             or QuitPhase.RunningHandlers
@@ -57,7 +64,7 @@ namespace AceLand.Lifecycle
             get
             {
                 if (!_startedAtUtc.HasValue) return 0d;
-                var end = s_CompletedAtUtc ?? DateTime.UtcNow;
+                var end = _completedAtUtc ?? DateTime.UtcNow;
                 return (end - _startedAtUtc.Value).TotalSeconds;
             }
         }
@@ -102,6 +109,12 @@ namespace AceLand.Lifecycle
         public static IDisposable AddBlocker(IQuitBlocker blocker)
         {
             if (blocker == null) return Disposable.Empty;
+
+            if (IsQuitting)
+                LifecycleLog.Warning(
+                    $"'{blocker.GetType().Name}' registered as a blocker after the quit started. " +
+                    "The frozen roster will not wait on it.");
+
             blockers.Add(blocker);
             return new Disposable(() => blockers.Remove(blocker));
         }
@@ -112,10 +125,33 @@ namespace AceLand.Lifecycle
         /// </summary>
         public static IDisposable Busy(string reason)
         {
+            if (IsQuitting && !AllowNewWorkWhileQuitting)
+            {
+                LifecycleLog.Error(
+                    $"Busy('{reason}') requested after the quit pipeline started — scope is inert. " +
+                    "Gate new work with LifecycleToken.IsQuitting or ApplicationQuitPipeline.TryBeginWork().");
+                return Disposable.Empty;
+            }
+
             var scope = new BusyScope(reason);
             blockers.Add(scope);
             scope.OnDispose = () => blockers.Remove(scope);
             return scope;
+        }
+
+        /// <summary>
+        /// The correct entry point for user-triggered work. Returns false once quitting has begun.
+        /// </summary>
+        public static bool TryBeginWork(string reason, out IDisposable scope)
+        {
+            if (IsQuitting)
+            {
+                scope = Disposable.Empty;
+                return false;
+            }
+
+            scope = Busy(reason);
+            return true;
         }
 
         /// <summary>Whether every blocker is currently idle. Equivalent to the original Playground.IsFree.</summary>
@@ -244,12 +280,21 @@ namespace AceLand.Lifecycle
 
         private static async Task RunThenQuitPlayer()
         {
+            // Created before RunAsync: ShutdownAll() tears down LifecycleHost.
+            var driver = QuitDriver.Ensure();
+
             try { await RunAsync(); }
             catch (Exception ex) { LifecycleLog.Exception(ex); }
             finally
             {
                 IsReadyToQuit = true;
-                Application.Quit();
+
+                if (driver != null) driver.QuitDeferred();
+                else
+                {
+                    LifecycleLog.Warning("No QuitDriver — calling Application.Quit() directly.");
+                    Application.Quit();
+                }
             }
         }
 
@@ -261,7 +306,7 @@ namespace AceLand.Lifecycle
             IsQuitting = true;
 
             _startedAtUtc = DateTime.UtcNow;
-            s_CompletedAtUtc = null;
+            _completedAtUtc = null;
             CurrentHandler = null;
 
             var ctx = new QuitContext
@@ -302,7 +347,7 @@ namespace AceLand.Lifecycle
             ModuleRegistry.ShutdownAll();
 
             Phase = QuitPhase.Completed;
-            s_CompletedAtUtc = DateTime.UtcNow;
+            _completedAtUtc = DateTime.UtcNow;
             ctx.SetStatus("Safe to quit.");
 
             try { QuitCompleted?.Invoke(); }
@@ -313,29 +358,60 @@ namespace AceLand.Lifecycle
 
         private static async Task WaitForBlockers(QuitContext ctx)
         {
-            if (IsFree) return;
+            // Snapshot: work started after the request must not extend the wait.
+            var watched = new List<IQuitBlocker>(blockers);
+            
+            LogRoster(watched);
 
-            var reason = BusyReason;
+            if (AllIdle(watched)) return;
+
+            var reason = FirstBusyReason(watched);
             LifecycleLog.Info($"Quit blocked: {reason}");
             ctx.SetStatus(reason);
 
             try { QuitBlocked?.Invoke(reason); }
             catch (Exception ex) { LifecycleLog.Exception(ex); }
 
-            while (!IsFree)
+            while (!AllIdle(watched))
             {
                 if (ctx.IsTimedOut)
                 {
-                    LifecycleLog.Error($"Quit blocker timed out after {ctx.TimeoutSeconds}s: {BusyReason}");
+                    LifecycleLog.Error($"Quit blocker timed out after {ctx.TimeoutSeconds:0}s: " +
+                                       $"{FirstBusyReason(watched)}");
                     return;
                 }
 
-                var current = BusyReason;
+                var current = FirstBusyReason(watched);
                 if (current != null && current != ctx.Status) ctx.SetStatus(current);
 
                 try { await Task.Delay(BLOCKER_POLL_MILLISECONDS, ctx.Token); }
                 catch (OperationCanceledException) { return; }
             }
+        }
+
+        private static bool AllIdle(List<IQuitBlocker> watched)
+        {
+            for (var i = 0; i < watched.Count; i++)
+                if (SafeIsBusy(watched[i])) return false;
+            return true;
+        }
+
+        private static string FirstBusyReason(List<IQuitBlocker> watched)
+        {
+            for (var i = 0; i < watched.Count; i++)
+                if (SafeIsBusy(watched[i]))
+                {
+                    try { return watched[i].BusyReason ?? "busy"; }
+                    catch { return watched[i].GetType().Name; }
+                }
+            return null;
+        }
+
+        private static bool SafeIsBusy(IQuitBlocker b)
+        {
+            if (b == null) return false;
+            try { return b.IsBusy; }
+            catch (Exception ex) { LifecycleLog.Exception(ex); return false; }
         }
 
         private static async Task RunHandler(HandlerEntry entry, QuitContext ctx, QuitStepInfo step)
@@ -451,8 +527,11 @@ namespace AceLand.Lifecycle
         internal static void ResetStatics()
         {
             Uninstall();
+            
             manual.Clear();
             blockers.Clear();
+            QuitDriver.Clear();
+            
             IsQuitting = false;
             IsReadyToQuit = false;
             CurrentStatus = null;
@@ -463,7 +542,7 @@ namespace AceLand.Lifecycle
             QuitCompleted = null;
             _activeSteps = null;
             _startedAtUtc = null;
-            s_CompletedAtUtc = null;
+            _completedAtUtc = null;
             Phase = QuitPhase.Idle;
             CurrentHandler = null;
         }
@@ -478,7 +557,7 @@ namespace AceLand.Lifecycle
 
             _activeSteps = null;
             _startedAtUtc = null;
-            s_CompletedAtUtc = null;
+            _completedAtUtc = null;
             Phase = QuitPhase.Idle;
             CurrentHandler = null;
             CurrentStatus = null;
@@ -488,6 +567,53 @@ namespace AceLand.Lifecycle
         }
 
         // ── helpers ────────────────────────────────────────────────────────
+        
+        private static void LogRoster(List<IQuitBlocker> watched)
+        {
+            if (!LifecycleLog.ENABLED) return;
+
+            var sb = new StringBuilder();
+
+            if (watched.Count == 0)
+            {
+                sb.AppendLine("Quit: no blockers registered.");
+            }
+            else
+            {
+                sb.Append("Quit: ").Append(watched.Count).AppendLine(" blocker(s):");
+
+                foreach (var b in watched)
+                {
+                    if (b == null) continue;
+
+                    var busy = SafeIsBusy(b);
+                    string reason;
+                    try { reason = b.BusyReason; }
+                    catch (Exception ex) { reason = $"BusyReason threw: {ex.Message}"; }
+
+                    sb.Append("   ").Append(busy ? "● busy" : "○ idle")
+                        .Append("  ").Append(b.GetType().Name)
+                        .Append("  ").AppendLine(FirstLine(reason) ?? "-");
+                }
+            }
+
+            var plan = BuildPlan();
+            sb.Append("Quit: ").Append(plan.Count).AppendLine(" handler(s):");
+
+            for (var i = 0; i < plan.Count; i++)
+                sb.Append("   ").Append(i.ToString("00")).Append(". ")
+                    .Append(plan[i].Name)
+                    .Append("  order ").AppendLine(plan[i].Order.ToString());
+
+            LifecycleLog.Info(sb.ToString());
+        }
+
+        private static string FirstLine(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            var i = text.IndexOf('\n');
+            return i < 0 ? text : text.Substring(0, i) + " …";
+        }
 
         private sealed class BusyScope : IQuitBlocker, IDisposable
         {
@@ -525,11 +651,16 @@ namespace AceLand.Lifecycle
 
             IsReadyToQuit = true;
             Phase = QuitPhase.Forced;
-            s_CompletedAtUtc = DateTime.UtcNow;
+            _completedAtUtc = DateTime.UtcNow;
             CurrentHandler = null;
 
             LifecycleToken.SignalDead();
             ModuleRegistry.ShutdownAll();
+
+#if !UNITY_EDITOR
+            var driver = QuitDriver.Ensure();
+            if (driver != null) driver.QuitDeferred();
+#endif
         }
         
         // ── Diagnostics types ───────────────────────────────────────────────

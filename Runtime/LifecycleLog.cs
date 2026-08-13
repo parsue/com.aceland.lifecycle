@@ -7,12 +7,12 @@ using Debug = UnityEngine.Debug;
 
 namespace AceLand.Lifecycle
 {
-    public static class LifecycleLog
+    internal static class LifecycleLog
     {
         private const string PREFIX = "<b>[Lifecycle]</b> ";
 
         /// <summary>Turn this off to mute everything (exceptions are still logged).</summary>
-        private const bool ENABLED = true;
+        public const bool ENABLED = true;
 
         /// <summary>Whether to print the actual execution order for each phase.</summary>
         private const bool DUMP_EXECUTION_ORDER = true;

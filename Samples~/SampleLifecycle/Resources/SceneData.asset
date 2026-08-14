@@ -14,4 +14,3 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::AceLand.Sample.LifeCycle.Profiles.SceneData
   prefabs:
   - {fileID: 3816944208280344027, guid: 97a01ba7378c6ad4181e13ffa0c25abb, type: 3}
-  - {fileID: 739183978061045793, guid: 1a8273e49f96485478ac21cce2cd3589, type: 3}

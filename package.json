@@ -1,6 +1,6 @@
 ﻿{
   "name": "com.aceland.lifecycle",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "displayName": "AceLand Lifecycle",
   "description": "Deterministic, dependency-ordered global initialization for Unity packages.\n\nAttributes only register; a topological sorter decides the real execution order.",
   "unity": "2022.3",

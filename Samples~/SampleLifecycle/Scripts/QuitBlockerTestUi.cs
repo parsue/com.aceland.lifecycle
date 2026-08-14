@@ -9,6 +9,8 @@ namespace AceLand.Sample.LifeCycle.Scripts
 {
     public class QuitBlockerTestUi : ModuleTester
     {
+        private int jobId = 0;
+        
         protected override void RunTest()
         {
             var countdown = Random.Range(5, 10);
@@ -24,7 +26,11 @@ namespace AceLand.Sample.LifeCycle.Scripts
         /// </summary>
         private async Task StartBlockJob(int countdown, CancellationToken token)
         {
-            if (!ApplicationQuitPipeline.TryBeginWork("Test Block Job", out var scope))
+            var id = jobId;
+            
+            jobId++;
+            
+            if (!ApplicationQuitPipeline.TryBeginWork($"Test Block Job - {id}", out var scope))
             {
                 Debug.LogWarning("Quit in progress — new blocker rejected.");
                 return;
@@ -34,14 +40,14 @@ namespace AceLand.Sample.LifeCycle.Scripts
             {
                 using (scope)
                 {
-                    Debug.Log($"Fake job started — quit is now blocked for {countdown}s");
+                    Debug.Log($"Fake job ({id}) started — quit is now blocked for {countdown}s");
                     while (countdown > 0)
                     {
-                        Debug.Log($"Fake job ... {countdown}");
+                        Debug.Log($"Fake job ({id}) ... {countdown}");
                         await Task.Delay(1000, token);
                         countdown--;
                     }
-                    Debug.Log("Fake job finished");
+                    Debug.Log($"Fake job ({id}) finished");
                 }
             }
             catch (Exception e)

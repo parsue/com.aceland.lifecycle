@@ -28,6 +28,7 @@ namespace AceLand.Sample.LifeCycle.Scripts
             message?.SetText("loading ... ");
             _sub = ModuleRegistry.WhenInitialized(OnInitialCompleted);
             ModuleRegistry.ModuleStateChanged += OnStateChanged;
+            ApplicationQuitPipeline.StatusChanged += OnQuit;
         }
 
         protected override void OnDestroy()
@@ -44,6 +45,15 @@ namespace AceLand.Sample.LifeCycle.Scripts
         private void OnInitialCompleted()
         {
             Debug.Log("Modules initialization completed");
+            filter?.SetActive(false);
+        }
+
+        private void OnQuit(string status)
+        {
+            // empty status means quit status not started
+            if (status == null || string.IsNullOrEmpty(status))
+                return;
+            
             filter?.SetActive(false);
         }
     }

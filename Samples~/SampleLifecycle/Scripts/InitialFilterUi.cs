@@ -1,4 +1,5 @@
-﻿using AceLand.Lifecycle;
+﻿using System;
+using AceLand.Lifecycle;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -19,12 +20,20 @@ namespace AceLand.Sample.LifeCycle.Scripts
         [SerializeField] private GameObject filter;
         [SerializeField] private TextMeshProUGUI message;
         
+        private IDisposable _sub;
+        
         protected override void Awake()
         {
-            filter.SetActive(true);
-            message.SetText("loading ... ");
-            ModuleRegistry.WhenInitialized(OnInitialCompleted);
+            filter?.SetActive(true);
+            message?.SetText("loading ... ");
+            _sub = ModuleRegistry.WhenInitialized(OnInitialCompleted);
             ModuleRegistry.ModuleStateChanged += OnStateChanged;
+        }
+
+        protected override void OnDestroy()
+        {
+            _sub?.Dispose();
+            ModuleRegistry.ModuleStateChanged -= OnStateChanged;
         }
 
         private void OnStateChanged(ModuleEntry obj)
@@ -35,7 +44,7 @@ namespace AceLand.Sample.LifeCycle.Scripts
         private void OnInitialCompleted()
         {
             Debug.Log("Modules initialization completed");
-            filter.SetActive(false);
+            filter?.SetActive(false);
         }
     }
 }

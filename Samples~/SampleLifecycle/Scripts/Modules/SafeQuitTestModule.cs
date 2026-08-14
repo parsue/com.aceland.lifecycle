@@ -8,6 +8,10 @@ namespace AceLand.Sample.LifeCycle.Scripts.Modules
     /// This is a sample Quit Handler module.
     /// Quit Handler will run after Quit Blocker.
     /// When all Quit Handler is completed, application will quit.
+    ///
+    /// In editor mode, event system in scene may stop on quit,
+    ///     but alive in build mode. 
+    /// See SafeQuitFilterUi.cs for handling first scene.
     /// </summary>
     [LifecycleModule(ModulePhase.Runtime)]
     [QuitOrder(-100)]

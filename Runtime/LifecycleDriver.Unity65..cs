@@ -6,18 +6,17 @@
 
 using Unity.Scripting.LifecycleManagement;
 using UnityEngine;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 namespace AceLand.Lifecycle
 {
     internal partial class LifecycleDriver
     {
-        // Assets are not fully loaded yet → only reset state and install hooks here; do not touch assets.
+        // Assets are NOT loaded yet. Install hooks only — never run a phase here.
         [OnCodeInitializing]
-        private static void OnCodeInitializing()
-        {
-            LifecycleToken.Prepare();
-            ApplicationQuitPipeline.Install();
-        }
+        private static void OnCodeInitializing() => ApplicationQuitPipeline.Install();
 
         [OnCodeUnloading]
         private static void OnCodeUnloading() => ShutdownEverything();
@@ -25,29 +24,25 @@ namespace AceLand.Lifecycle
         [OnCodeDeinitializing]
         private static void OnCodeDeinitializing() => ShutdownEverything();
 
-        [OnEnteringPlayMode]
-        private static void OnEnteringPlayMode()
-        {
-            ApplicationQuitPipeline.ResetStatics();
-            ModuleRegistry.ResetStatics();
-            LifecycleToken.ResetStatics();
-            ApplicationQuitPipeline.Install();
-        }
-
         [OnExitingPlayMode]
         private static void OnExitingPlayMode() => ShutdownEverything();
 
         private static void ShutdownEverything()
         {
-            ModuleRegistry.ShutdownAll();
+            // Cancel first so any in-flight await unwinds before modules are torn down.
             LifecycleToken.SignalQuitting();
             LifecycleToken.SignalDead();
+            ModuleRegistry.ShutdownAll();
         }
 
-        // Phase driving still relies on RuntimeInitializeOnLoadMethod:
-        // it guarantees that all assemblies finish one stage before the next begins, which is exactly the barrier we want.
+        // Phase driving still relies on RuntimeInitializeOnLoadMethod: it guarantees every
+        // assembly finishes one stage before the next begins, which is the barrier we need.
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterAssembliesLoaded)]
-        private static void RunCore() => ModuleRegistry.RunPhase(ModulePhase.Core);
+        private static void RunCore()
+        {
+            ApplicationQuitPipeline.Install();
+            ModuleRegistry.RunPhase(ModulePhase.Core);
+        }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void RunRuntime() => ModuleRegistry.RunPhase(ModulePhase.Runtime);
@@ -57,8 +52,19 @@ namespace AceLand.Lifecycle
         {
             ModuleRegistry.RunPhase(ModulePhase.Scene);
             ModuleRegistry.RunPhase(ModulePhase.Late);
+            ModuleRegistry.SealInitialization();
             LifecycleHost.EnsureHost();
         }
+
+#if UNITY_EDITOR
+        // [InitializeOnEnterPlayMode] rather than [OnEnteringPlayMode]: proven behaviour,
+        // and only one reset hook so a failure is diagnosable rather than masked.
+        [InitializeOnEnterPlayMode]
+        private static void OnEnterPlayMode() => LifecycleDriverShared.ResetAll("entering play mode");
+
+        [UnityEditor.Callbacks.DidReloadScripts]
+        private static void OnScriptsReloaded() => LifecycleDriverShared.VerifyAfterReload();
+#endif
     }
 }
 

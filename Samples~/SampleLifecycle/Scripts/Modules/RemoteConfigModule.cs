@@ -55,7 +55,7 @@ namespace AceLand.Sample.LifeCycle.Scripts.Modules
         {
             Debug.Log($"Getting dummy data for {gameId}");
             
-            var getTime = 4;
+            var getTime = 3;
             while (getTime > 0)
             {
                 Debug.Log($"Getting Remote Data ... {getTime}");

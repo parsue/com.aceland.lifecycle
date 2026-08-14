@@ -5,8 +5,8 @@ namespace AceLand.Sample.LifeCycle.Scripts.Profiles
     [CreateAssetMenu(fileName = "SceneData", menuName = "AceLand/Sample/LifeCycle/SceneData")]
     public sealed class SceneData : ScriptableObject
     {
-        [SerializeField] private Canvas sceneInfoUiPrefab;
+        [SerializeField] private Canvas[] prefabs;
         
-        public Canvas SceneInfoUiPrefab => sceneInfoUiPrefab;
+        public Canvas[] Prefabs => prefabs;
     }
 }

@@ -56,14 +56,17 @@ namespace AceLand.Sample.LifeCycle.Scripts.Modules
 
         private void CreateSceneObject()
         {
-            Debug.Log("Creating Scene Object...");
+            Debug.Log("Creating Scene Objects ...");
 
-            var prefab = SceneData.SceneInfoUiPrefab;
-            
-            var ui = Object.Instantiate(prefab);
-            ui.gameObject.name = $"Scene Info UI (created by {nameof(SceneModule)})";
-            
-            Debug.Log($"Scene Object created: {ui.gameObject.name}");
+            foreach (var prefab in SceneData.Prefabs)
+            {
+                var ui = Object.Instantiate(prefab);
+                var replace = ui.gameObject.name.Replace("(Clone)", "");
+                var goName = $"{replace.Trim()} (created by {nameof(SceneModule)})";
+                ui.gameObject.name = goName;
+                
+                Debug.Log($"Scene Object created: {goName}");
+            }
         }
     }
 }

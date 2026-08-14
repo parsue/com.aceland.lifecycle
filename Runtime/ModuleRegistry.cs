@@ -17,7 +17,15 @@ namespace AceLand.Lifecycle
         private static readonly List<string> issues = new();
 
         private static readonly Dictionary<Type, List<Action<IModule>>> readyCallbacks = new();
-        internal static IReadOnlyList<ModuleEntry> StartedEntries => started;
+        
+        private static readonly List<Action> initializedCallbacks = new();
+        private static readonly HashSet<ModulePhase> completedPhases = new();
+
+        private static readonly TaskCompletionSource<bool> readyTcs =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private static readonly DateTime initStartedUtc = DateTime.UtcNow;
+        private static InitializationResult _result;
 
         private static Task _chain = Task.CompletedTask;
         private static bool _scanned;
@@ -30,10 +38,81 @@ namespace AceLand.Lifecycle
         public static event Action<ModuleEntry> ModuleStateChanged;
 
         /// <summary>A Task that completes when the entire initialization chain (including async modules) is done.</summary>
-        public static Task Ready => _chain;
+        public static Task Ready => readyTcs.Task;
 
+        internal static IReadOnlyList<ModuleEntry> StartedEntries => started;
         public static IReadOnlyList<ModuleEntry> Entries => entries;
         public static IReadOnlyList<string> Issues => issues;
+
+        /// <summary>
+        /// The reset point when Domain Reload is disabled. Called by LifecycleDriver before entering Play Mode.
+        /// </summary>
+        internal static void ResetStatics()
+        {
+            ShutdownAll();
+            
+            entries.Clear();
+            byId.Clear();
+            started.Clear();
+            issues.Clear();
+            readyCallbacks.Clear();
+            
+            _chain = Task.CompletedTask;
+            _scanned = false;
+            _shuttingDown = false;
+            ModuleStateChanged = null;
+            IsInitialized = false;
+        }
+        
+        /// <summary>Called by the driver once the final phase has been queued.</summary>
+        internal static void SealInitialization()
+        {
+            _chain = SealChained(_chain);
+        }
+
+        private static async Task SealChained(Task previous)
+        {
+            try { await previous; }
+            catch (Exception ex) { LifecycleLog.Exception(ex); }
+
+            if (IsInitialized) return;
+
+            int ready = 0, failed = 0, skipped = 0;
+            foreach (var t in entries)
+            {
+                switch (t.State)
+                {
+                    case ModuleState.Ready: ready++; break;
+                    case ModuleState.Failed: failed++; break;
+                    case ModuleState.Skipped: skipped++; break;
+                }
+            }
+
+            _result = new InitializationResult(
+                entries.Count, ready, failed, skipped,
+                (DateTime.UtcNow - initStartedUtc).TotalMilliseconds);
+
+            IsInitialized = true;
+
+            LifecycleLog.Info($"Initialization complete — {_result}");
+            if (_result.HasErrors)
+                LifecycleLog.Error($"Initialization finished with errors — {_result}");
+
+            // Snapshot: a callback may register another.
+            var pending = initializedCallbacks.ToArray();
+            initializedCallbacks.Clear();
+
+            foreach (var cb in pending)
+            {
+                try { cb(); }
+                catch (Exception ex) { LifecycleLog.Exception(ex); }
+            }
+
+            try { InitializationCompleted?.Invoke(_result); }
+            catch (Exception ex) { LifecycleLog.Exception(ex); }
+
+            readyTcs.TrySetResult(true);
+        }
 
         // ── Registration ────────────────────────────────────────────────────
 
@@ -106,6 +185,43 @@ namespace AceLand.Lifecycle
             entries.Add(entry);
             byId[id] = entry;
             ModuleStateChanged?.Invoke(entry);
+        }
+
+        // ── Events ─────────────────────────────────────────────────────────
+        
+        /// <summary>
+        /// Raised once per phase, after every module in it has settled. Fires even for empty phases.
+        /// Not replayed — use <see cref="WhenInitialized"/> if you may subscribe late.
+        /// </summary>
+        public static event Action<ModulePhase> PhaseCompleted;
+
+        /// <summary>
+        /// Raised once, after the final phase. This is the point at which every module is settled.
+        /// Not replayed — prefer <see cref="WhenInitialized"/>.
+        /// </summary>
+        public static event Action<InitializationResult> InitializationCompleted;
+
+        public static bool IsInitialized { get; private set; }
+        public static InitializationResult Result => _result;
+        public static bool IsPhaseCompleted(ModulePhase phase) => completedPhases.Contains(phase);
+
+        /// <summary>
+        /// Invokes immediately if initialization already finished, otherwise queues.
+        /// This is the correct hook for a MonoBehaviour.
+        /// </summary>
+        public static IDisposable WhenInitialized(Action callback)
+        {
+            if (callback == null) return Disposable.Empty;
+
+            if (IsInitialized)
+            {
+                try { callback(); }
+                catch (Exception ex) { LifecycleLog.Exception(ex); }
+                return Disposable.Empty;
+            }
+
+            initializedCallbacks.Add(callback);
+            return new Disposable(() => initializedCallbacks.Remove(callback));
         }
 
         // ── Queries ─────────────────────────────────────────────────────────
@@ -261,11 +377,16 @@ namespace AceLand.Lifecycle
             EnsureScanned();
 
             var batch = new List<ModuleEntry>();
+            
             foreach (var t in entries)
                 if (t.Phase == phase && t.State == ModuleState.Registered)
                     batch.Add(t);
 
-            if (batch.Count == 0) return;
+            if (batch.Count == 0)
+            {
+                CompletePhase(phase);
+                return;
+            }
 
             var sorted = ModuleSorter.Sort(batch, byId, issues);
             LifecycleLog.DumpOrder(phase, sorted);
@@ -322,6 +443,16 @@ namespace AceLand.Lifecycle
                     ModuleStateChanged?.Invoke(e);
                 }
             }
+            
+            CompletePhase(phase);
+        }
+
+        private static void CompletePhase(ModulePhase phase)
+        {
+            if (!completedPhases.Add(phase)) return;
+
+            try { PhaseCompleted?.Invoke(phase); }
+            catch (Exception ex) { LifecycleLog.Exception(ex); }
         }
 
         private static Type FirstUnmetDependency(ModuleEntry e)
@@ -373,23 +504,6 @@ namespace AceLand.Lifecycle
             started.Clear();
             LifecycleHost.DestroyRoot();
             _shuttingDown = false;
-        }
-
-        /// <summary>
-        /// The reset point when Domain Reload is disabled. Called by LifecycleDriver before entering Play Mode.
-        /// </summary>
-        internal static void ResetStatics()
-        {
-            ShutdownAll();
-            entries.Clear();
-            byId.Clear();
-            started.Clear();
-            issues.Clear();
-            _chain = Task.CompletedTask;
-            _scanned = false;
-            readyCallbacks.Clear();
-            _shuttingDown = false;
-            ModuleStateChanged = null;
         }
     }
 }

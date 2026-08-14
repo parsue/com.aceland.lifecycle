@@ -11,48 +11,36 @@ namespace AceLand.Lifecycle
     internal static class LifecycleDriver
     {
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterAssembliesLoaded)]
-        static void RunCore()
+        private static void RunCore()
         {
-            LifecycleToken.Prepare();
+            // No Prepare() here: the static constructor and ResetStatics() both cover it,
+            // and calling it again abandons two live CancellationTokenSource.
             ApplicationQuitPipeline.Install();
             ModuleRegistry.RunPhase(ModulePhase.Core);
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
-        static void RunRuntime() => ModuleRegistry.RunPhase(ModulePhase.Runtime);
+        private static void RunRuntime() => ModuleRegistry.RunPhase(ModulePhase.Runtime);
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        static void RunScene()
+        private static void RunScene()
         {
             ModuleRegistry.RunPhase(ModulePhase.Scene);
             ModuleRegistry.RunPhase(ModulePhase.Late);
+            ModuleRegistry.SealInitialization();   // chained, so async modules are covered
             LifecycleHost.EnsureHost();
         }
 
 #if UNITY_EDITOR
-        /// <summary>The reset point when Domain Reload is disabled; runs earlier than every RuntimeInitializeOnLoadMethod.</summary>
+        /// <summary>
+        /// The reset point when Domain Reload is disabled.
+        /// Runs earlier than every RuntimeInitializeOnLoadMethod.
+        /// </summary>
         [InitializeOnEnterPlayMode]
-        static void OnEnterPlayMode()
-        {
-            ApplicationQuitPipeline.ResetStatics();
-            ModuleRegistry.ResetStatics();
-            LifecycleToken.ResetStatics();
-        }
+        private static void OnEnterPlayMode() => LifecycleDriverShared.ResetAll("entering play mode");
 
         [UnityEditor.Callbacks.DidReloadScripts]
-        private static void OnScriptsReloaded()
-        {
-            if (!Application.isPlaying) return;
-            if (ModuleRegistry.Entries.Count > 0) return;
-
-            LifecycleLog.Error(
-                "Scripts recompiled during Play Mode. All lifecycle statics were reset while scene " +
-                "objects survived — no module is registered and Get<T>() will throw.\n" +
-                "Stop and re-enter Play Mode. To avoid this, set Preferences ▸ General ▸ " +
-                "Script Changes While Playing to 'Recompile After Finished Playing'.");
-
-            LifecycleHost.EnsureHost();   // adopt the orphan so a duplicate isn't created later
-        }
+        private static void OnScriptsReloaded() => LifecycleDriverShared.VerifyAfterReload();
 #endif
     }
 }

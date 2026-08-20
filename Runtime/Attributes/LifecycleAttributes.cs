@@ -28,6 +28,21 @@ namespace AceLand.Lifecycle
         /// </summary>
         public bool AutoRegister { get; set; } = true;
 
+        /// <summary>
+        /// Opt-in flag: when <c>true</c> this async module may be initialized concurrently with other
+        /// same-dependency-level modules that are also marked <see cref="AllowParallel"/>.
+        /// <para>Defaults to <c>false</c> — a purely synchronous / unmarked project keeps its exact
+        /// sequential behaviour. Synchronous modules always run in order regardless of this flag.</para>
+        /// </summary>
+        public bool AllowParallel { get; set; }
+
+        /// <summary>
+        /// Per-module async initialization timeout in milliseconds. <c>0</c> (default) means no per-module limit.
+        /// On timeout the module is marked <see cref="ModuleState.Failed"/> without blocking the rest of the phase.
+        /// Overrides the phase-level timeout from <see cref="LifecyclePhaseOptionsAttribute"/> when non-zero.
+        /// </summary>
+        public int TimeoutMs { get; set; }
+
         public LifecycleModuleAttribute(ModulePhase phase) => Phase = phase;
     }
 
@@ -37,4 +52,28 @@ namespace AceLand.Lifecycle
     /// </summary>
     [AttributeUsage(AttributeTargets.Assembly, Inherited = false, AllowMultiple = false)]
     public sealed class LifecycleAssemblyAttribute : Attribute { }
+
+    /// <summary>
+    /// Assembly-level phase tuning for parallel initialization, e.g.
+    /// <c>[assembly: LifecyclePhaseOptions(ModulePhase.Runtime, Parallel = true, TimeoutMs = 5000)]</c>.
+    /// <para><see cref="Parallel"/> sets the default <see cref="LifecycleModuleAttribute.AllowParallel"/> for
+    /// every module in that phase (a module's own explicit attribute still wins).
+    /// <see cref="TimeoutMs"/> sets the whole-phase budget; when exceeded the phase is forced forward and an
+    /// issue is recorded, honouring the "never deadlock" philosophy.</para>
+    /// <para>Multiple assemblies may each declare options; per phase the strictest wins (Parallel OR-ed on,
+    /// the smallest non-zero TimeoutMs).</para>
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Assembly, Inherited = false, AllowMultiple = true)]
+    public sealed class LifecyclePhaseOptionsAttribute : Attribute
+    {
+        public ModulePhase Phase { get; }
+
+        /// <summary>Default <see cref="LifecycleModuleAttribute.AllowParallel"/> for modules in this phase.</summary>
+        public bool Parallel { get; set; }
+
+        /// <summary>Whole-phase timeout in milliseconds. <c>0</c> (default) means unlimited.</summary>
+        public int TimeoutMs { get; set; }
+
+        public LifecyclePhaseOptionsAttribute(ModulePhase phase) => Phase = phase;
+    }
 }

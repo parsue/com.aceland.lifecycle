@@ -50,12 +50,31 @@ namespace AceLand.Lifecycle
             sb.Append(PREFIX).Append("phase <b>").Append(phase).Append("</b> order (")
               .Append(sorted.Count).AppendLine("):");
 
+            var lastLevel = -1;
             for (var i = 0; i < sorted.Count; i++)
             {
                 var e = sorted[i];
-                sb.Append("  ").Append(i.ToString("00")).Append(". ")
+
+                // Group the printout by dependency level so parallel batches are visually obvious.
+                if (e.Level != lastLevel)
+                {
+                    lastLevel = e.Level;
+                    var parallelCount = 0;
+                    foreach (var m in sorted)
+                        if (m.Level == e.Level && m.AllowParallel && m.IsAsync)
+                            parallelCount++;
+
+                    sb.Append("  <b>level ").Append(e.Level).Append("</b>");
+                    if (parallelCount > 1)
+                        sb.Append(" (").Append(parallelCount).Append(" parallel)");
+                    sb.AppendLine(":");
+                }
+
+                sb.Append("    ").Append(i.ToString("00")).Append(". ")
                   .Append(e.DisplayName);
                 if (e.IsAsync) sb.Append(" [async]");
+                if (e.AllowParallel) sb.Append(" [parallel]");
+                if (e.TimeoutMs > 0) sb.Append(" [timeout ").Append(e.TimeoutMs).Append("ms]");
                 if (e.DependsOn.Length > 0)
                 {
                     sb.Append("  <- ");

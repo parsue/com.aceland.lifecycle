@@ -8,6 +8,8 @@ namespace AceLand.Lifecycle
         /// <summary>
         /// Topologically sorts the modules of a single phase. The input is first normalized by (Order, FullName) to keep the result deterministic.
         /// A detected cycle is recorded as an issue and the offending node is pushed to the end.
+        /// <para>Each returned entry also gets its <see cref="ModuleEntry.Level"/> assigned — the dependency layer within the phase.
+        /// Modules that share a level have no dependency between them and are therefore eligible for concurrent initialization.</para>
         /// </summary>
         public static List<ModuleEntry> Sort(List<ModuleEntry> batch,
                                              IReadOnlyDictionary<Type, ModuleEntry> all,
@@ -23,6 +25,8 @@ namespace AceLand.Lifecycle
             var stack = new List<Type>();
 
             foreach (var e in batch) Visit(e);
+
+            AssignLevels(result, local);
             return result;
 
             void Visit(ModuleEntry e)
@@ -79,6 +83,30 @@ namespace AceLand.Lifecycle
                 stack.RemoveAt(stack.Count - 1);
                 color[e.Id] = 2;
                 result.Add(e);
+            }
+        }
+
+        /// <summary>
+        /// Assigns each entry a dependency level: <c>0</c> for modules whose in-phase dependencies are all satisfied
+        /// by earlier phases, otherwise <c>1 + max(level of same-phase dependencies)</c>.
+        /// The input list is already in topological order, so in-batch dependencies are resolved first.
+        /// </summary>
+        private static void AssignLevels(List<ModuleEntry> ordered, Dictionary<Type, ModuleEntry> local)
+        {
+            foreach (var e in ordered)
+            {
+                var level = 0;
+                foreach (var d in e.DependsOn)
+                {
+                    if (d == null) continue;
+                    // Only same-phase (in-batch) dependencies constrain the level; earlier-phase deps are already done.
+                    if (local.TryGetValue(d, out var dep) && !ReferenceEquals(dep, e))
+                    {
+                        var depLevel = dep.Level < 0 ? 0 : dep.Level;
+                        if (depLevel + 1 > level) level = depLevel + 1;
+                    }
+                }
+                e.Level = level;
             }
         }
 

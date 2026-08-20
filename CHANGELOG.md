@@ -1,6 +1,17 @@
 ﻿# Changelog
-
 All notable changes to this project will be documented in this file.
+
+# Exp - published
+
+## [0.3.0] - 2026-08-20
+### Added
+- [PlayerLoop] porting from Player Loop Hack package
+- [Player Loop Graph] a graph for live monitor of player loop processes status
+- [Initialization Timeline] a editor profiler for deep optimization of initialization modules
+### Modified
+- [Sample] updated with PlayerLoop
+- [Graph] source tracing action and context menu on node, search filter
+- [Quit Pipeline Graph] node-base graph now
 
 --
 # Beta - published

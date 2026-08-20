@@ -11,10 +11,17 @@ namespace AceLand.Lifecycle
         {
             LifecycleLog.Info($"Reset ({reason}) — {ModuleRegistry.Entries.Count} stale entry(ies).");
 
+            // CoreCLR premise: never rely on domain reload to clear injected PlayerLoop
+            // delegates. Strip our nodes explicitly before anything else so a reset never
+            // leaves a stale tick delegate pointing at collected state.
+            LifecyclePlayerLoop.EnsureRemoved();
+
             // Order matters: quit hooks first, modules next (they may use tokens during
-            // Shutdown), tokens last so that shutdown code still has a live token.
+            // Shutdown), frame scheduler before tokens (its handles own linked sources and
+            // must force-cancel their awaiters while a live token still exists), tokens last.
             ApplicationQuitPipeline.ResetStatics();
             ModuleRegistry.ResetStatics();
+            FrameScheduler.ResetStatics();
             LifecycleToken.ResetStatics();
         }
 

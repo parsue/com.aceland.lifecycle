@@ -7,7 +7,7 @@ namespace AceLand.Lifecycle.Editor
     {
         private const string AUTO_VALIDATE_KEY = "AceLand.Lifecycle.AutoValidate";
 
-        [MenuItem("Tools/AceLand/Lifecycle/Validate Dependencies", priority = 11)]
+        [MenuItem("Tools/AceLand/Lifecycle/Validate Dependencies", priority = 23)]
         public static void Validate()
         {
             var data = ModuleGraphModel.Build(preferLive: false);
@@ -20,10 +20,10 @@ namespace AceLand.Lifecycle.Editor
 
             foreach (var issue in data.Issues) LifecycleLog.Error(issue);
             LifecycleLog.Error($"Validation found {data.Issues.Count} issue(s). " +
-                               "Open Tools > AceLand > Lifecycle > Dependency Graph.");
+                               "Open Tools > AceLand > Lifecycle > Initialization Graph.");
         }
 
-        [MenuItem("Tools/AceLand/Lifecycle/Auto Validate On Compile", priority = 12)]
+        [MenuItem("Tools/AceLand/Lifecycle/Auto Validate On Compile", priority = 24)]
         private static void ToggleAutoValidate()
         {
             var v = !EditorPrefs.GetBool(AUTO_VALIDATE_KEY, false);

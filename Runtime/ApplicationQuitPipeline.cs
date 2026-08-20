@@ -33,6 +33,13 @@ namespace AceLand.Lifecycle
         /// <summary>While shutting down, whether a second quit request from the user is let through immediately (escape hatch against deadlocks).</summary>
         private const bool ALLOW_FORCE_QUIT_ON_SECOND_REQUEST = true;
 
+        /// <summary>
+        /// Controls when the Lifecycle frame pump is removed during quit. Default is
+        /// <see cref="PlayerLoopQuitLifespan.AfterBlockers"/>. See the enum docs for the
+        /// per-mode trade-offs (notably the frame-pump caveat on <c>OnWantToQuit</c>).
+        /// </summary>
+        public static PlayerLoopQuitLifespan PlayerLoopLifespan { get; set; } = PlayerLoopQuitLifespan.AfterBlockers;
+
         // ── State ───────────────────────────────────────────────────────────
 
         public static bool IsQuitting { get; private set; }
@@ -56,6 +63,13 @@ namespace AceLand.Lifecycle
         public static bool IsActive => Phase is QuitPhase.WaitingForBlockers
             or QuitPhase.RunningHandlers
             or QuitPhase.ShuttingDown;
+
+        // True while this pipeline is installed and has not yet finished — i.e. a Play Mode
+        // exit (Editor) will be intercepted and driven through the full quit sequence. Unlike
+        // IsActive, this is already true at the instant the ExitingPlayMode event is dispatched,
+        // before RunAsync has set Phase. The Editor PlayerLoop safety net gates on this so it
+        // does not tear the frame pump down before the pipeline takes ownership of removal.
+        internal static bool WillInterceptQuit => _installed && !IsReadyToQuit;
 
         public static bool HasResult => Phase is QuitPhase.Completed or QuitPhase.Forced;
         
@@ -305,6 +319,12 @@ namespace AceLand.Lifecycle
             if (IsQuitting) return;
             IsQuitting = true;
 
+            // Lifespan checkpoint ①: OnWantToQuit removes the frame pump the moment a
+            // quit is requested. Only safe when no blocker/handler relies on frame
+            // advancement (see PlayerLoopQuitLifespan.OnWantToQuit docs).
+            if (PlayerLoopLifespan == PlayerLoopQuitLifespan.OnWantToQuit)
+                LifecyclePlayerLoop.EnsureRemoved();
+
             _startedAtUtc = DateTime.UtcNow;
             _completedAtUtc = null;
             CurrentHandler = null;
@@ -337,6 +357,12 @@ namespace AceLand.Lifecycle
             Phase = QuitPhase.WaitingForBlockers;
             await WaitForBlockers(ctx);
 
+            // Lifespan checkpoint ②: AfterBlockers (default) removes the frame pump once
+            // blockers have drained but before quit handlers run. Blockers may rely on
+            // frame advancement; handlers must not.
+            if (PlayerLoopLifespan == PlayerLoopQuitLifespan.AfterBlockers)
+                LifecyclePlayerLoop.EnsureRemoved();
+
             Phase = QuitPhase.RunningHandlers;
             for (var i = 0; i < plan.Count; i++)
                 await RunHandler(plan[i], ctx, _activeSteps[i]);
@@ -345,6 +371,12 @@ namespace AceLand.Lifecycle
             Phase = QuitPhase.ShuttingDown;
             ctx.SetStatus("Shutting down modules ...");
             ModuleRegistry.ShutdownAll();
+
+            // Lifespan checkpoint ③: LastMoment. This unconditional call is also the
+            // idempotent final backstop for every mode — after blockers, handlers and
+            // module shutdown, nothing should keep ticking during the final teardown
+            // (CoreCLR: no domain reload to clean up after us).
+            LifecyclePlayerLoop.EnsureRemoved();
 
             Phase = QuitPhase.Completed;
             _completedAtUtc = DateTime.UtcNow;

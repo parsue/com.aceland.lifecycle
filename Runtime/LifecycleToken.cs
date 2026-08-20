@@ -11,7 +11,7 @@ namespace AceLand.Lifecycle
     /// <para><b>Quitting</b>: cancelled the moment the user requests a quit.
     /// Use this for things that should stop immediately, such as game loops, polling and animations.</para>
     /// </summary>
-    public static class LifecycleToken
+    public static partial class LifecycleToken
     {
         private static CancellationTokenSource _aliveCts;
         private static CancellationTokenSource _quittingCts;

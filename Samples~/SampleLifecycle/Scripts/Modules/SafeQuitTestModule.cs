@@ -13,7 +13,7 @@ namespace AceLand.Sample.LifeCycle.Scripts.Modules
     ///     but alive in build mode. 
     /// See SafeQuitFilterUi.cs for handling first scene.
     /// </summary>
-    [LifecycleModule(ModulePhase.Runtime)]
+    [LifecycleModule(ModulePhase.Runtime, AllowParallel = true)]
     [QuitOrder(-100)]
     public sealed class SafeQuitTestModule : ModuleBase, IQuitHandler
     {

@@ -17,8 +17,29 @@ namespace AceLand.Lifecycle.Editor
         private const float ORIGIN_X = 40f;
         private const float ORIGIN_Y = 70f;
 
-        public static void Layout(GraphData data, Dictionary<Type, GraphNode> byId)
+        /// <summary>
+        /// Builds a type→node lookup from <paramref name="data"/> and runs
+        /// <see cref="Layout(GraphData, Dictionary{Type, GraphNode}, Func{GraphNode, bool})"/>.
+        /// Convenience for callers (e.g. the window) that only hold a <see cref="GraphData"/>.
+        /// </summary>
+        public static void Layout(GraphData data, Func<GraphNode, bool> isVisible = null)
         {
+            var byId = new Dictionary<Type, GraphNode>();
+            foreach (var n in data.Nodes)
+                if (n.Id != null) byId[n.Id] = n;
+            Layout(data, byId, isVisible);
+        }
+
+        /// <param name="isVisible">
+        /// Optional filter. When supplied, non-matching nodes are excluded from the
+        /// layout so the visible nodes pack contiguously with no gaps, and phases with
+        /// no visible node are omitted entirely.
+        /// </param>
+        public static void Layout(GraphData data, Dictionary<Type, GraphNode> byId,
+                                  Func<GraphNode, bool> isVisible = null)
+        {
+            bool Visible(GraphNode n) => isVisible == null || isVisible(n);
+
             data.Bands.Clear();
 
             var x = ORIGIN_X;
@@ -28,7 +49,7 @@ namespace AceLand.Lifecycle.Editor
             {
                 var inPhase = new List<GraphNode>();
                 foreach (var n in data.Nodes)
-                    if (n.Phase == phase) inPhase.Add(n);
+                    if (n.Phase == phase && Visible(n)) inPhase.Add(n);
 
                 if (inPhase.Count == 0) continue;
 

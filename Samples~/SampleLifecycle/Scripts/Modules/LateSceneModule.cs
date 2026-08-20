@@ -15,7 +15,7 @@ namespace AceLand.Sample.LifeCycle.Scripts.Modules
     ///     and run other tasks in this phase.
     /// See InitialFilterUi.cs for handling first scene.
     /// </summary>
-    [LifecycleModule(ModulePhase.Late, Order = int.MaxValue)]
+    [LifecycleModule(ModulePhase.Late, Order = 5000)]
     internal sealed class LateSceneModule : AsyncModuleBase
     {
         public override async Task InitializeAsync(CancellationToken cancellationToken)

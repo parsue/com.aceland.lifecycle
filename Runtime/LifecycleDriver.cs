@@ -16,6 +16,9 @@ namespace AceLand.Lifecycle
             // No Prepare() here: the static constructor and ResetStatics() both cover it,
             // and calling it again abandons two live CancellationTokenSource.
             ApplicationQuitPipeline.Install();
+            // Inject our PlayerLoop tick nodes as early as possible so the frame pump is live
+            // for the whole play session. Idempotent + self-healing; removed on every teardown.
+            LifecyclePlayerLoop.EnsureInstalled();
             ModuleRegistry.RunPhase(ModulePhase.Core);
         }
 

@@ -12,9 +12,6 @@ namespace AceLand.Lifecycle.Editor
         private const float SIDEBAR_WIDTH = 300f;
         private const float ACCENT_WIDTH = 8f;
         private const float QUIT_BADGE_WIDTH = 5f;
-        private const float PANEL_MIN = 90f;
-        private const float PANEL_MAX = 420f;
-        private const float SPLITTER = 5f;
         
         private const float EDGE_WIDTH = 2.5f;
         private const float EDGE_WIDTH_HI = 4.5f;
@@ -28,11 +25,6 @@ namespace AceLand.Lifecycle.Editor
         private static readonly Color edgeCycle    = new(1.00f, 0.28f, 0.22f);
         private static readonly Color edgeHalo     = new(0.08f, 0.08f, 0.09f);
 
-        private readonly QuitPanel _quitPanel = new();
-        private bool _showQuitPanel = true;
-        private float _panelHeight = 150f;
-        private bool _draggingSplitter;
-
         private GraphData _data;
         private Vector2 _pan = Vector2.zero;
         private float _zoom = 1f;
@@ -41,19 +33,41 @@ namespace AceLand.Lifecycle.Editor
         private Vector2 _inspectorScroll;
         private bool _showIssues = true;
         private bool _liveMode = true;
+        private const string SEARCH_CONTROL = "DependencyGraphSearch";
         private string _search = string.Empty;
         private double _lastRepaint;
+
+        // Cross-window focus request (e.g. from the Quit Pipeline Graph's handler context menu).
+        private string _pendingFocus;
 
         private readonly HashSet<Type> _highlightUp = new();
         private readonly HashSet<Type> _highlightDown = new();
 
-        [MenuItem("Tools/AceLand/Lifecycle/Dependency Graph", priority = 10)]
+        [MenuItem("Tools/AceLand/Lifecycle/Initialization Graph", priority = 10)]
         public static void Open()
         {
             var w = GetWindow<DependencyGraphWindow>();
-            w.titleContent = new GUIContent("Lifecycle Graph");
+            w.titleContent = new GUIContent("Initialization Graph");
             w.minSize = new Vector2(860f, 560f);
             w.Show();
+        }
+
+        /// <summary>
+        /// Opens the Initialization Graph, then selects and centers the node whose
+        /// display name matches <paramref name="displayName"/>. Used by the Quit
+        /// Pipeline Graph's "View in Initialization Graph" action.
+        /// </summary>
+        public static void FocusNode(string displayName)
+        {
+            var w = GetWindow<DependencyGraphWindow>();
+            w.titleContent = new GUIContent("Initialization Graph");
+            w.minSize = new Vector2(860f, 560f);
+            w.Show();
+            w.Focus();
+            w._search = string.Empty;
+            w.ApplyLayout(); // clear any filter-packed layout so all nodes are positioned
+            w._pendingFocus = displayName;
+            w.Repaint();
         }
 
         private void OnEnable()
@@ -95,12 +109,25 @@ namespace AceLand.Lifecycle.Editor
         private void Rebuild()
         {
             _data = ModuleGraphModel.Build(_liveMode);
+            ApplyLayout();
             if (_selected != null)
             {
                 var id = _selected.Id;
                 _selected = _data.Nodes.Find(n => n.Id == id);
                 RecalculateHighlight();
             }
+        }
+
+        /// <summary>
+        /// Re-runs the graph layout, packing only the nodes that match the current
+        /// search so hidden nodes leave no gaps. With an empty search this reproduces
+        /// the full layout.
+        /// </summary>
+        private void ApplyLayout()
+        {
+            if (_data == null) return;
+            GraphLayout.Layout(_data,
+                string.IsNullOrEmpty(_search) ? (Func<GraphNode, bool>)null : NodeVisible);
         }
 
         // ── GUI ────────────────────────────────────────────────────────────
@@ -114,47 +141,48 @@ namespace AceLand.Lifecycle.Editor
             var body = new Rect(0f, EditorStyles.toolbar.fixedHeight,
                 position.width, position.height - EditorStyles.toolbar.fixedHeight);
 
-            var panelH = _showQuitPanel ? Mathf.Clamp(_panelHeight, PANEL_MIN, PANEL_MAX) : 0f;
-            var upperH = body.height - panelH - (_showQuitPanel ? SPLITTER : 0f);
+            var graphRect = new Rect(body.x, body.y, body.width - SIDEBAR_WIDTH, body.height);
+            var sideRect = new Rect(body.xMax - SIDEBAR_WIDTH, body.y, SIDEBAR_WIDTH, body.height);
 
-            var graphRect = new Rect(body.x, body.y, body.width - SIDEBAR_WIDTH, upperH);
-            var sideRect = new Rect(body.xMax - SIDEBAR_WIDTH, body.y, SIDEBAR_WIDTH, upperH);
+            ResolvePendingFocus(graphRect);
 
             HandleInput(graphRect);
             DrawGraph(graphRect);
             DrawSidebar(sideRect);
-
-            if (!_showQuitPanel) return;
-
-            var splitRect = new Rect(body.x, graphRect.yMax, body.width, SPLITTER);
-            HandleSplitter(splitRect, body);
-
-            _quitPanel.Draw(new Rect(body.x, splitRect.yMax, body.width, panelH));
         }
 
-        private void HandleSplitter(Rect rect, Rect body)
+        private void ResolvePendingFocus(Rect graphRect)
         {
-            EditorGUI.DrawRect(rect, new Color(0.12f, 0.12f, 0.13f));
-            EditorGUIUtility.AddCursorRect(rect, MouseCursor.ResizeVertical);
+            if (string.IsNullOrEmpty(_pendingFocus)) return;
+            if (_data == null) return;
 
-            var e = Event.current;
+            GraphNode match = null;
+            foreach (var n in _data.Nodes)
+                if (string.Equals(n.DisplayName, _pendingFocus, StringComparison.OrdinalIgnoreCase))
+                {
+                    match = n;
+                    break;
+                }
 
-            if (e.type == EventType.MouseDown && e.button == 0 && rect.Contains(e.mousePosition))
+            if (match == null)
             {
-                _draggingSplitter = true;
-                e.Use();
+                // Graph is populated but the node is absent; give up silently.
+                if (_data.Nodes.Count > 0) _pendingFocus = null;
+                return;
             }
-            else if (e.type == EventType.MouseDrag && _draggingSplitter)
-            {
-                _panelHeight = Mathf.Clamp(body.yMax - e.mousePosition.y, PANEL_MIN, PANEL_MAX);
-                e.Use();
-                Repaint();
-            }
-            else if (e.type == EventType.MouseUp && _draggingSplitter)
-            {
-                _draggingSplitter = false;
-                e.Use();
-            }
+
+            SelectNode(match);
+            FocusOn(match, graphRect);
+            _pendingFocus = null;
+        }
+
+        private void FocusOn(GraphNode node, Rect graphRect)
+        {
+            _zoom = 1f;
+            var center = node.Rect.center;
+            _pan = new Vector2(
+                graphRect.width * 0.5f - center.x * _zoom,
+                graphRect.height * 0.5f - center.y * _zoom);
         }
 
         private void DrawToolbar()
@@ -176,20 +204,13 @@ namespace AceLand.Lifecycle.Editor
                 GUILayout.Label("Zoom", EditorStyles.miniLabel, GUILayout.Width(36f));
                 _zoom = GUILayout.HorizontalSlider(_zoom, MIN_ZOOM, MAX_ZOOM, GUILayout.Width(90f));
                 
-                GUILayout.Space(8f);
-
-                var quitting = Application.isPlaying && ApplicationQuitPipeline.IsQuitting;
-                var qc = GUI.color;
-                if (quitting) GUI.color = new Color(1f, 0.7f, 0.35f);
-                _showQuitPanel = GUILayout.Toggle(_showQuitPanel,
-                    quitting ? $"Quit ▸ {ApplicationQuitPipeline.Phase}" : "Quit",
-                    EditorStyles.toolbarButton, GUILayout.Width(quitting ? 170f : 46f));
-                GUI.color = qc;
-
                 GUILayout.FlexibleSpace();
 
-                _search = GUILayout.TextField(_search, EditorStyles.toolbarSearchField,
-                                              GUILayout.Width(180f));
+                if (GraphSearchField.Draw(180f, SEARCH_CONTROL, ref _search))
+                {
+                    ApplyLayout();
+                    Repaint();
+                }
 
                 var issueCount = _data?.Issues.Count ?? 0;
                 var c = GUI.color;
@@ -209,6 +230,8 @@ namespace AceLand.Lifecycle.Editor
             _zoom = 1f;
             _pan = new Vector2(10f, 10f);
         }
+
+        private bool NodeVisible(GraphNode n) => GraphSearchField.Matches(_search, n.DisplayName);
 
         private void HandleInput(Rect graphRect)
         {
@@ -236,7 +259,7 @@ namespace AceLand.Lifecycle.Editor
                 var world = ScreenToWorld(e.mousePosition, graphRect);
                 GraphNode hit = null;
                 foreach (var n in _data.Nodes)
-                    if (n.Rect.Contains(world)) { hit = n; break; }
+                    if (NodeVisible(n) && n.Rect.Contains(world)) { hit = n; break; }
 
                 _selected = hit;
                 RecalculateHighlight();
@@ -252,7 +275,7 @@ namespace AceLand.Lifecycle.Editor
                 var world = ScreenToWorld(e.mousePosition, graphRect);
                 GraphNode hit = null;
                 foreach (var n in _data.Nodes)
-                    if (n.Rect.Contains(world)) { hit = n; break; }
+                    if (NodeVisible(n) && n.Rect.Contains(world)) { hit = n; break; }
 
                 if (hit != null)
                 {
@@ -276,6 +299,16 @@ namespace AceLand.Lifecycle.Editor
             menu.AddItem(new GUIContent("Copy DependsOn Snippet"), false, () =>
                 EditorGUIUtility.systemCopyBuffer =
                     $"DependsOn = new[] {{ typeof({id.Name}) }}");
+            menu.AddSeparator("");
+            menu.AddItem(new GUIContent("View in Initialization Timeline"), false,
+                () => InitializationTimelineWindow.FocusModule(node.DisplayName));
+            if (node.IsQuitHandler)
+            {
+                menu.AddSeparator("");
+                menu.AddItem(new GUIContent("View in Quit Pipeline"), false,
+                    () => QuitPipelineWindow.FocusStep(node.DisplayName));
+            }
+
             menu.AddSeparator("");
             menu.AddItem(new GUIContent($"Origin: {ScriptLocator.DescribeOrigin(id)}"), false, null);
 
@@ -354,6 +387,9 @@ namespace AceLand.Lifecycle.Editor
                     var dep = _data.Nodes.Find(x => x.Id == d);
                     if (dep == null) continue;
 
+                    // Hide edges whose endpoints are filtered out.
+                    if (!NodeVisible(dep) || !NodeVisible(n)) continue;
+
                     if (IsEdgeHighlighted(dep, n)) highlighted.Add((dep, n));
                     else DrawEdge(dep, n, local);
                 }
@@ -364,7 +400,11 @@ namespace AceLand.Lifecycle.Editor
             Handles.EndGUI();
 
             // Nodes
-            foreach (var n in _data.Nodes) DrawNode(n, local);
+            foreach (var n in _data.Nodes)
+            {
+                if (!NodeVisible(n)) continue;
+                DrawNode(n, local);
+            }
 
             GUI.EndClip();
         }
@@ -484,11 +524,8 @@ namespace AceLand.Lifecycle.Editor
             var r = WorldToScreen(n.Rect, local);
             if (!r.Overlaps(local)) return;
 
-            var dimmed = !string.IsNullOrEmpty(_search) &&
-                         n.DisplayName.IndexOf(_search, StringComparison.OrdinalIgnoreCase) < 0;
-
             var accent = StateColor(n.State);
-            var bg = new Color(0.22f, 0.23f, 0.25f, dimmed ? 0.35f : 1f);
+            var bg = new Color(0.22f, 0.23f, 0.25f, 1f);
 
             EditorGUI.DrawRect(r, bg);
             EditorGUI.DrawRect(new Rect(r.x, r.y, ACCENT_WIDTH * _zoom, r.height), accent);
@@ -516,7 +553,7 @@ namespace AceLand.Lifecycle.Editor
             var nodeTitle = new GUIStyle(EditorStyles.boldLabel)
             {
                 fontSize = fs,
-                normal = { textColor = dimmed ? Color.gray : Color.white },
+                normal = { textColor = Color.white },
                 clipping = TextClipping.Clip,
             };
             var sub = new GUIStyle(EditorStyles.miniLabel)

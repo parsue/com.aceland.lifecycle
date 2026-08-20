@@ -32,7 +32,15 @@ namespace AceLand.Lifecycle
             // Cancel first so any in-flight await unwinds before modules are torn down.
             LifecycleToken.SignalQuitting();
             LifecycleToken.SignalDead();
+
+            // Force-cancel every scheduled frame handle (draining awaiters with
+            // OperationCanceledException) and unsubscribe the pump before modules tear down.
+            FrameScheduler.ResetStatics();
             ModuleRegistry.ShutdownAll();
+
+            // CoreCLR premise: explicitly remove our PlayerLoop nodes; do not wait for a
+            // domain reload that may never happen.
+            LifecyclePlayerLoop.EnsureRemoved();
         }
 
         // Phase driving still relies on RuntimeInitializeOnLoadMethod: it guarantees every
@@ -41,6 +49,9 @@ namespace AceLand.Lifecycle
         private static void RunCore()
         {
             ApplicationQuitPipeline.Install();
+            // Inject our PlayerLoop tick nodes as early as possible so the frame pump is live
+            // for the whole play session. Idempotent + self-healing; removed on every teardown.
+            LifecyclePlayerLoop.EnsureInstalled();
             ModuleRegistry.RunPhase(ModulePhase.Core);
         }
 

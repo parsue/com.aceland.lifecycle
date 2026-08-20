@@ -31,6 +31,11 @@ namespace AceLand.Lifecycle
         private static bool _scanned;
         private static bool _shuttingDown;
 
+        // Assembly-level phase tuning collected from [assembly: LifecyclePhaseOptions].
+        // Per phase: Parallel is OR-ed across assemblies, TimeoutMs keeps the smallest non-zero value.
+        private static readonly Dictionary<ModulePhase, (bool parallel, int timeoutMs)> phaseOptions = new();
+        private static bool _phaseOptionsScanned;
+
         /// <summary>
         /// State change notification. <b>Never replayed</b> — subscribing in Start() misses every event from the Core / Runtime phases.
         /// To obtain a module use <see cref="WhenReady{T}"/>; to observe everything use <see cref="ObserveStates"/>.
@@ -56,9 +61,13 @@ namespace AceLand.Lifecycle
             started.Clear();
             issues.Clear();
             readyCallbacks.Clear();
-            
+            phaseOptions.Clear();
+            LifecycleProfiler.Reset();
+            completedPhases.Clear();
+
             _chain = Task.CompletedTask;
             _scanned = false;
+            _phaseOptionsScanned = false;
             _shuttingDown = false;
             ModuleStateChanged = null;
             IsInitialized = false;
@@ -136,6 +145,8 @@ namespace AceLand.Lifecycle
             if (module == null) { LifecycleLog.Error("Register(null) ignored."); return; }
             id ??= module.GetType();
 
+            EnsurePhaseOptions();
+
             var attr = (LifecycleModuleAttribute)Attribute.GetCustomAttribute(
                 module.GetType(), typeof(LifecycleModuleAttribute));
 
@@ -170,6 +181,8 @@ namespace AceLand.Lifecycle
                 }
             }
 
+            var phaseOpt = GetPhaseOptions(phase.Value);
+
             var entry = new ModuleEntry
             {
                 Id = id,
@@ -180,6 +193,10 @@ namespace AceLand.Lifecycle
                 IsAsync = module is IAsyncModule,
                 AutoRegistered = autoRegistered,
                 State = ModuleState.Registered,
+                // The phase default turns parallelism on; a module's own AllowParallel can only add to it.
+                AllowParallel = (attr?.AllowParallel ?? false) || phaseOpt.parallel,
+                // Per-module async timeout (0 = unlimited). Independent of the whole-phase budget.
+                TimeoutMs = attr?.TimeoutMs ?? 0,
             };
 
             entries.Add(entry);
@@ -204,6 +221,15 @@ namespace AceLand.Lifecycle
         public static bool IsInitialized { get; private set; }
         public static InitializationResult Result => _result;
         public static bool IsPhaseCompleted(ModulePhase phase) => completedPhases.Contains(phase);
+
+        /// <summary>
+        /// Snapshot of the initialization timeline (per-phase and per-module timing) collected
+        /// while <see cref="LifecycleProfiler.Enabled"/> was on. Returns
+        /// <see cref="LifecycleTimeline.Empty"/> when profiling was disabled or nothing ran.
+        /// Safe to call at any time; before initialization completes it reflects progress so far.
+        /// </summary>
+        public static LifecycleTimeline GetTimeline() =>
+            LifecycleProfiler.BuildTimeline(entries, IsInitialized ? _result.Milliseconds : 0d);
 
         /// <summary>
         /// Invokes immediately if initialization already finished, otherwise queues.
@@ -377,7 +403,7 @@ namespace AceLand.Lifecycle
             EnsureScanned();
 
             var batch = new List<ModuleEntry>();
-            
+
             foreach (var t in entries)
                 if (t.Phase == phase && t.State == ModuleState.Registered)
                     batch.Add(t);
@@ -388,63 +414,186 @@ namespace AceLand.Lifecycle
                 return;
             }
 
+            var profiling = LifecycleProfiler.Enabled;
+            if (profiling) LifecycleProfiler.EnsureRunStarted();
+            var phaseStartMs = profiling ? LifecycleProfiler.Now : 0d;
+
             var sorted = ModuleSorter.Sort(batch, byId, issues);
             LifecycleLog.DumpOrder(phase, sorted);
 
-            var token = GetAppToken();
-
             for (var i = 0; i < sorted.Count; i++)
+                sorted[i].SortIndex = i;
+
+            var appToken = GetAppToken();
+            var phaseTimeoutMs = GetPhaseOptions(phase).timeoutMs;
+
+            // The phase budget is a linked child of the app token. When it fires we stop waiting
+            // and force forward — honouring the "never deadlock" philosophy.
+            using var phaseCts = CancellationTokenSource.CreateLinkedTokenSource(appToken);
+            if (phaseTimeoutMs > 0) phaseCts.CancelAfter(phaseTimeoutMs);
+
+            var maxLevel = 0;
+            foreach (var e in sorted)
+                if (e.Level > maxLevel) maxLevel = e.Level;
+
+            var phaseTimedOut = false;
+
+            // Process one dependency level at a time. Every dependency has a strictly smaller level,
+            // so all earlier levels are guaranteed done before this one starts.
+            for (var lvl = 0; lvl <= maxLevel && !phaseTimedOut; lvl++)
             {
-                var e = sorted[i];
-                e.SortIndex = i;
+                if (appToken.IsCancellationRequested) break;
 
-                var missing = FirstUnmetDependency(e);
-                if (missing != null)
+                List<ModuleEntry> levelEntries = null;
+                foreach (var e in sorted)
+                    if (e.Level == lvl)
+                        (levelEntries ??= new List<ModuleEntry>()).Add(e);
+
+                if (levelEntries == null) continue;
+
+                // Fire off the parallel-eligible async modules first so their awaits overlap the sync work below.
+                List<Task> parallelTasks = null;
+                foreach (var e in levelEntries)
                 {
-                    e.State = ModuleState.Skipped;
-                    e.Error = $"dependency '{missing.Name}' is not ready";
-                    LifecycleLog.Error($"Skip {e.DisplayName}: {e.Error}.");
-                    ModuleStateChanged?.Invoke(e);
-                    continue;
+                    if (e.AllowParallel && e.Module is IAsyncModule)
+                        (parallelTasks ??= new List<Task>()).Add(InitModuleAsync(e, phaseCts, appToken));
                 }
 
-                var sw = Stopwatch.StartNew();
-                try
+                // Everything else (sync modules, or async modules not opted into parallelism) runs in order.
+                foreach (var e in levelEntries)
                 {
-                    e.State = ModuleState.Initializing;
-                    ModuleStateChanged?.Invoke(e);
-
-                    e.Module.Initialize();
-
-                    if (e.Module is IAsyncModule async)
-                        await async.InitializeAsync(token);
-
-                    e.State = ModuleState.Ready;
-                    started.Add(e);
-                    FlushReadyCallbacks(e);
+                    if (e.AllowParallel && e.Module is IAsyncModule) continue;
+                    await InitModuleAsync(e, phaseCts, appToken);
+                    if (appToken.IsCancellationRequested) break;
                 }
-                catch (OperationCanceledException)
+
+                if (parallelTasks != null)
                 {
+                    // Per-module failures are already recorded inside InitModuleAsync; WhenAll only surfaces exceptions.
+                    try { await Task.WhenAll(parallelTasks); }
+                    catch { /* individual results already handled */ }
+                }
+
+                if (phaseCts.IsCancellationRequested && !appToken.IsCancellationRequested)
+                    phaseTimedOut = true;
+            }
+
+            if (phaseTimedOut)
+            {
+                var msg = $"Phase '{phase}' exceeded its {phaseTimeoutMs}ms budget; forced forward.";
+                if (!issues.Contains(msg)) issues.Add(msg);
+                LifecycleLog.Error(msg);
+            }
+
+            if (profiling)
+            {
+                LifecycleProfiler.RecordPhase(new PhaseTimingInfo(
+                    phase, phaseStartMs, LifecycleProfiler.Now,
+                    sorted.Count, maxLevel + 1, phaseTimedOut));
+            }
+
+            CompletePhase(phase);
+        }
+
+        /// <summary>
+        /// Initializes a single module, recording its state transitions and timing.
+        /// Failures are contained here so a concurrent batch never aborts as a whole.
+        /// </summary>
+        private static async Task InitModuleAsync(ModuleEntry e, CancellationTokenSource phaseCts, CancellationToken appToken)
+        {
+            var missing = FirstUnmetDependency(e);
+            if (missing != null)
+            {
+                e.State = ModuleState.Skipped;
+                e.Error = $"dependency '{missing.Name}' is not ready";
+                LifecycleLog.Error($"Skip {e.DisplayName}: {e.Error}.");
+                ModuleStateChanged?.Invoke(e);
+                return;
+            }
+
+            CancellationTokenSource moduleCts = null;
+            var moduleToken = phaseCts.Token;
+            if (e.TimeoutMs > 0)
+            {
+                moduleCts = CancellationTokenSource.CreateLinkedTokenSource(phaseCts.Token);
+                moduleCts.CancelAfter(e.TimeoutMs);
+                moduleToken = moduleCts.Token;
+            }
+
+            var profiling = LifecycleProfiler.Enabled;
+            var startedAtMs = 0d;
+            var syncMs = 0d;
+            if (profiling)
+            {
+                LifecycleProfiler.EnsureRunStarted();
+                startedAtMs = LifecycleProfiler.Now;
+                e.StartedAtMs = startedAtMs;
+            }
+
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                e.State = ModuleState.Initializing;
+                ModuleStateChanged?.Invoke(e);
+
+                e.Module.Initialize();
+
+                if (profiling) syncMs = sw.Elapsed.TotalMilliseconds;
+
+                if (e.Module is IAsyncModule async)
+                    await async.InitializeAsync(moduleToken);
+
+                e.State = ModuleState.Ready;
+                started.Add(e);
+                FlushReadyCallbacks(e);
+            }
+            catch (OperationCanceledException)
+            {
+                if (appToken.IsCancellationRequested)
+                {
+                    // Application is shutting down — abandon quietly, do not report as an error.
                     e.State = ModuleState.Skipped;
                     e.Error = "cancelled";
-                    return;
                 }
-                catch (Exception ex)
+                else if (moduleCts != null && moduleCts.IsCancellationRequested)
                 {
+                    // Per-module timeout: fail only this module, never block the rest of the phase.
                     e.State = ModuleState.Failed;
-                    e.Error = ex.Message;
-                    LifecycleLog.Exception(
-                        new Exception($"[Lifecycle] '{e.DisplayName}' initialization failed.", ex));
+                    e.Error = $"timed out after {e.TimeoutMs}ms";
+                    LifecycleLog.Error($"'{e.DisplayName}' timed out after {e.TimeoutMs}ms.");
                 }
-                finally
+                else
                 {
-                    sw.Stop();
-                    e.InitMilliseconds = sw.Elapsed.TotalMilliseconds;
-                    ModuleStateChanged?.Invoke(e);
+                    // Cancelled by the phase-level budget; the phase reports its own issue once.
+                    e.State = ModuleState.Failed;
+                    e.Error = "phase timeout";
                 }
             }
-            
-            CompletePhase(phase);
+            catch (Exception ex)
+            {
+                e.State = ModuleState.Failed;
+                e.Error = ex.Message;
+                LifecycleLog.Exception(
+                    new Exception($"[Lifecycle] '{e.DisplayName}' initialization failed.", ex));
+            }
+            finally
+            {
+                sw.Stop();
+                var totalMs = sw.Elapsed.TotalMilliseconds;
+                e.InitMilliseconds = totalMs;
+
+                if (profiling)
+                {
+                    // If Initialize() threw, syncMs was never captured; fall back to the total elapsed.
+                    if (syncMs <= 0d || syncMs > totalMs) syncMs = totalMs;
+                    e.SyncMilliseconds = syncMs;
+                    e.AsyncMilliseconds = totalMs - syncMs;
+                    e.EndedAtMs = startedAtMs + totalMs;
+                }
+
+                ModuleStateChanged?.Invoke(e);
+                moduleCts?.Dispose();
+            }
         }
 
         private static void CompletePhase(ModulePhase phase)
@@ -474,6 +623,46 @@ namespace AceLand.Lifecycle
             if (_scanned) return;
             _scanned = true;
             ModuleAutoScanner.ScanAndRegister();
+        }
+
+        /// <summary>
+        /// Collects <see cref="LifecyclePhaseOptionsAttribute"/> from every loaded assembly exactly once.
+        /// Runs on first <see cref="Register"/> so both auto-scanned and manually registered modules see the phase defaults.
+        /// </summary>
+        private static void EnsurePhaseOptions()
+        {
+            if (_phaseOptionsScanned) return;
+            _phaseOptionsScanned = true;
+
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                if (asm.IsDynamic) continue;
+
+                object[] opts;
+                try { opts = asm.GetCustomAttributes(typeof(LifecyclePhaseOptionsAttribute), false); }
+                catch { continue; }
+
+                foreach (LifecyclePhaseOptionsAttribute o in opts)
+                    MergePhaseOptions(o.Phase, o.Parallel, o.TimeoutMs);
+            }
+        }
+
+        private static void MergePhaseOptions(ModulePhase phase, bool parallel, int timeoutMs)
+        {
+            if (phaseOptions.TryGetValue(phase, out var cur))
+                phaseOptions[phase] = (cur.parallel || parallel, SmallestNonZero(cur.timeoutMs, timeoutMs));
+            else
+                phaseOptions[phase] = (parallel, timeoutMs);
+        }
+
+        private static (bool parallel, int timeoutMs) GetPhaseOptions(ModulePhase phase)
+            => phaseOptions.TryGetValue(phase, out var o) ? o : (false, 0);
+
+        private static int SmallestNonZero(int a, int b)
+        {
+            if (a == 0) return b;
+            if (b == 0) return a;
+            return a < b ? a : b;
         }
 
         // ── Shutdown ────────────────────────────────────────────────────────

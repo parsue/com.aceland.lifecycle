@@ -1,6 +1,7 @@
 ﻿using System;
 using AceLand.Lifecycle;
 using AceLand.Sample.LifeCycle.Scripts.Modules;
+using AceLand.Sample.LifeCycle.Scripts.Profiles;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -26,16 +27,38 @@ namespace AceLand.Sample.LifeCycle.Scripts
         [SerializeField] private TextMeshProUGUI playerLifeText;
         [SerializeField] private TextMeshProUGUI playerLifeMaxText;
 
+        /// <summary>
+        /// Populates the UI from lifecycle modules once they are ready.
+        /// <para>
+        /// Scene MonoBehaviours are not part of the lifecycle dependency graph, so their
+        /// <c>Start()</c> can run while async modules (e.g. <see cref="RemoteConfigModule"/>)
+        /// are still initializing. Calling <c>ModuleRegistry.Get&lt;T&gt;()</c> here would throw,
+        /// because the module is not yet in the Ready state.
+        /// </para>
+        /// <para>
+        /// Instead, we use <c>WhenReady&lt;T&gt;</c>, which invokes the callback immediately when the
+        /// module is already ready, or defers it until then. Nesting the calls guarantees every
+        /// dependency is ready before <see cref="Init"/> reads their data, avoiding the race.
+        /// </para>
+        /// </summary>
         protected override void Start()
         {
-            var remoteData = ModuleRegistry.Get<RemoteConfigModule>().Data;
-            var gameSettings = ModuleRegistry.Get<GameSettings>();
-            var playerData = ModuleRegistry.Get<PlayerSystemModule>().PlayerData;
+            ModuleRegistry.WhenReady<GameSettings>(settings =>
+                ModuleRegistry.WhenReady<RemoteConfigModule>(remote =>
+                    ModuleRegistry.WhenReady<PlayerSystemModule>(player =>
+                    {
+                        Init(remote.Data, settings, player.PlayerData);
+                    })
+                )
+            );
+        }
 
-            // playerData is null.
-            if (remoteData == null || gameSettings == null || !playerData)
-                throw new Exception($"Data is not ready. {remoteData != null} | {gameSettings != null} | {playerData == true}");
-            
+        private void Init(
+            RemoteData remoteData,
+            GameSettings gameSettings,
+            PlayerData playerData
+        )
+        {
             accessTokenText?.SetText(remoteData.AccessToken);
             serverStateText?.SetText(remoteData.ServerState);
             gatewayIdText?.SetText(remoteData.GatewayId.ToString());

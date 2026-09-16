@@ -22,7 +22,7 @@ namespace AceLand.Sample.LifeCycle.Scripts.Modules
         {
             GameId = Guid.NewGuid().ToString();
             GameName = "AceLand Lifecycle Sample";
-            GameVersion = "0.1.0";
+            GameVersion = "1.0.2";
             GameDescription = "This is a sample data of AceLand Lifecycle";
             GameAuthor = "Parsue Choi";
             

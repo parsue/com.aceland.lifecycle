@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 ---
 # Release - published
 
+## [1.0.3] - 2026-09-17
+### Modified
+- Sample updated.
+
 ## [1.0.2] - 2026-09-16
 ### Fixed
 - [Menu] The `Tools > AceLand > Lifecycle > License` item is now its own separate group, matching the grouping used by other AceLand tools. The Lifecycle submenu now shows three groups (License / graph & timeline tools / validation) instead of two.

@@ -43,22 +43,22 @@ namespace AceLand.Sample.LifeCycle.Scripts
         /// </summary>
         protected override void Start()
         {
-            ModuleRegistry.WhenReady<GameSettings>(settings =>
-                ModuleRegistry.WhenReady<RemoteConfigModule>(remote =>
-                    ModuleRegistry.WhenReady<PlayerSystemModule>(player =>
-                    {
-                        Init(remote.Data, settings, player.PlayerData);
-                    })
-                )
-            );
+            ModuleRegistry.WhenInitialized(Init);
         }
 
-        private void Init(
-            RemoteData remoteData,
-            GameSettings gameSettings,
-            PlayerData playerData
-        )
+        private void Init()
         {
+            if (!ModuleRegistry.TryGet<GameSettings>(out var gameSettings) ||
+                !ModuleRegistry.TryGet<RemoteConfigModule>(out var remoteConfig) ||
+                !ModuleRegistry.TryGet<PlayerSystemModule>(out var playerSystem))
+            {
+                Debug.LogError("Module(s) is not ready.", this);
+                return;
+            }
+
+            var remoteData = remoteConfig.Data;
+            var playerData = playerSystem.PlayerData;
+            
             accessTokenText?.SetText(remoteData.AccessToken);
             serverStateText?.SetText(remoteData.ServerState);
             gatewayIdText?.SetText(remoteData.GatewayId.ToString());

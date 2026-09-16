@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 ---
 # Release - published
 
+## [1.0.2] - 2026-09-16
+### Fixed
+- [Menu] The `Tools > AceLand > Lifecycle > License` item is now its own separate group, matching the grouping used by other AceLand tools. The Lifecycle submenu now shows three groups (License / graph & timeline tools / validation) instead of two.
+### Notes
+- Requires AceLand Licensing 1.0.1+, which fixes reliable per-product rebinding of the shared License window (opening a second product's License menu now correctly switches the window content and no longer blocks starting that product's trial).
+
 ## [1.0.1] - 2026-09-16
 ### Modified
 - Licensing is now an OPTIONAL dependency. Installing AceLand Lifecycle no longer force-installs AceLand Licensing. The runtime and builds are unaffected as always; the paid Editor tools (Initialization Graph, Player Loop Graph, Initialization Timeline, Quit Pipeline Graph, dependency validation) simply stay disabled and show a one-click install prompt until AceLand Licensing is present.

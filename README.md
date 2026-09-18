@@ -118,6 +118,6 @@ the gated windows.
 
 We use GitBook as the public documentation for our packages.
 
-> Visit our [GitBook](https://docs.parsue.io/aceland-unity-packages)
+> Visit our [GitBook](https://docs.parsue.io/aceland-unity-packages/core-packages/lifecycle)
 
 Please visit our GitBook for details.

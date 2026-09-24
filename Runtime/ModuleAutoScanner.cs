@@ -92,7 +92,7 @@ namespace AceLand.Lifecycle
 
         private static void WarnAboutMissedAssemblies(Assembly[] assemblies)
         {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#if UNITY_EDITOR
             foreach (var asm in assemblies)
             {
                 if (asm.IsDynamic) continue;

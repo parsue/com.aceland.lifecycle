@@ -41,7 +41,6 @@ namespace AceLand.Lifecycle
         public static void Exception(Exception ex) => Debug.LogException(ex);
 
         [Conditional("UNITY_EDITOR")]
-        [Conditional("DEVELOPMENT_BUILD")]
         internal static void DumpOrder(ModulePhase phase, List<ModuleEntry> sorted)
         {
             if (!Enabled || !DUMP_EXECUTION_ORDER || sorted.Count == 0) return;

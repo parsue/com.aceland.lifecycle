@@ -17,7 +17,7 @@ namespace AceLand.Lifecycle
     public static class LifecycleProfiler
     {
         private static bool _enabled =
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#if UNITY_EDITOR
             true;
 #else
             false;

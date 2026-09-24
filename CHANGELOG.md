@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 ---
 # Release - published
 
+## [1.0.5] -2026-09-24
+### Fixed
+- [Warning] ignore AppDomain warnings for lower Unity version supports.
+
 ## [1.0.4] - 2026-09-24
 ### Modified
 - Rearrange Tools menu

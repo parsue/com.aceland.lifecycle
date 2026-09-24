@@ -639,7 +639,12 @@ namespace AceLand.Lifecycle
             if (_phaseOptionsScanned) return;
             _phaseOptionsScanned = true;
 
+            // UAC0005: Unity 建議改用 CurrentAssemblies.GetLoadedAssemblies() 或 TypeCache，
+            // 但兩者皆為 Editor-only API，無法用於此 Runtime assembly（最低支援 Unity 2022.3）。
+            // 掃描已用 IsDynamic 過濾並包覆例外處理，故局部抑制此警告。
+#pragma warning disable UAC0005
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+#pragma warning restore UAC0005
             {
                 if (asm.IsDynamic) continue;
 

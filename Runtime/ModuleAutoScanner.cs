@@ -15,7 +15,13 @@ namespace AceLand.Lifecycle
 #if ACELAND_LIFECYCLE_NO_AUTOSCAN
             return;
 #else
+            // UAC0005: Unity 建議改用 CurrentAssemblies.GetLoadedAssemblies() 或 TypeCache，
+            // 但兩者皆為 Editor-only API，無法用於此 Runtime assembly（最低支援 Unity 2022.3）。
+            // 這裡以已載入 assembly 逐一 opt-in 掃描，已用 IsDynamic 過濾並包覆例外處理，
+            // 因此忽略 dynamic/unloaded assembly 導致的風險，故局部抑制此警告。
+#pragma warning disable UAC0005
             var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+#pragma warning restore UAC0005
             var found = new List<Type>();
             var scannedNames = new List<string>();
 

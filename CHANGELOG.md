@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 ---
 # Release - published
 
+## [1.0.4] - 2026-09-24
+### Modified
+- Rearrange Tools menu
+
 ## [1.0.3] - 2026-09-17
 ### Modified
 - Sample updated.

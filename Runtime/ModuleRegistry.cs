@@ -541,7 +541,16 @@ namespace AceLand.Lifecycle
                 e.State = ModuleState.Initializing;
                 ModuleStateChanged?.Invoke(e);
 
+#if ENABLE_PROFILER
+                // Level C: measure the synchronous Initialize() of this module in the Unity Profiler.
+                // The async InitializeAsync() below is intentionally NOT wrapped: a ProfilerMarker scope
+                // cannot straddle an await (it is thread-affine and would unbalance Begin/End). Async
+                // timing is captured separately via Stopwatch into e.AsyncMilliseconds.
+                using (e.Marker.Auto())
+                    e.Module.Initialize();
+#else
                 e.Module.Initialize();
+#endif
 
                 if (profiling) syncMs = sw.Elapsed.TotalMilliseconds;
 

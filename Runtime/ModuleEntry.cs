@@ -1,4 +1,7 @@
 ﻿using System;
+#if ENABLE_PROFILER
+using Unity.Profiling;
+#endif
 
 namespace AceLand.Lifecycle
 {
@@ -44,6 +47,14 @@ namespace AceLand.Lifecycle
         public int Level { get; internal set; } = -1;
 
         public string DisplayName => Id != null ? Id.Name : "<null>";
+
+#if ENABLE_PROFILER
+        private ProfilerMarker? _marker;
+
+        /// <summary>Level C marker, lazily built from <see cref="DisplayName"/>; wraps the synchronous
+        /// <see cref="IModule.Initialize"/> so module init is visible in the Unity Profiler.</summary>
+        internal ProfilerMarker Marker => _marker ??= new ProfilerMarker(LifecycleProfilerMarkers.ModulePrefix + DisplayName);
+#endif
 
         public override string ToString() => $"{DisplayName} ({Phase}, {State})";
     }

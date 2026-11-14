@@ -67,6 +67,12 @@ namespace AceLand.Lifecycle
 
         private static void OnTick(PlayerLoopPoint point)
         {
+#if ENABLE_PROFILER
+            // Level A: aggregate cost of this injection point's pump (sits under the parent
+            // PlayerLoopSystem marker in the Profiler). Individual handles add their own Level B
+            // markers nested inside this scope. Auto() disposes at method end (zero cost in release).
+            using var pumpScope = LifecycleProfilerMarkers.Pump[(int)point].Auto();
+#endif
             var bucket = _buckets[(int)point];
 
             // Advance existing handles; swap-remove finished ones.

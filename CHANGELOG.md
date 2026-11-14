@@ -4,7 +4,18 @@ All notable changes to this project will be documented in this file.
 ---
 # Release - published
 
-## [1.0.5] -2026-09-24
+## [1.0.6] - 2026-01-14
+### Added
+- **Unity Profiler integration (`ProfilerMarker`).** Lifecycle's per-frame and per-module work now shows up as named samples in the Unity Profiler instead of a single generic `UpdateFunction.Invoke()`. Three levels:
+  - **Level A** — one marker per PlayerLoop injection point (`AceLand.Lifecycle.Pump.<Point>`), wrapping the whole per-point pump in `FrameScheduler`.
+  - **Level B** — one marker per scheduled action (`AceLand.Lifecycle.Frame.<Type.Member:line>`), wrapping only the user action. The label is taken from the **scheduling call site** (via `[CallerMemberName]`/`[CallerFilePath]`/`[CallerLineNumber]`), so distinct `LifecycleFrame.Run*` calls stay distinct in the Profiler instead of collapsing under a shared compiler-generated lambda name; it falls back to the action's `Type.Method` when a call site is unavailable.
+  - **Level C** — one marker per module init (`AceLand.Lifecycle.Module.<DisplayName>`), wrapping the synchronous `IModule.Initialize()`.
+- All markers are compiled only under `ENABLE_PROFILER` (Editor + development builds); release builds carry zero marker fields and zero sampling overhead.
+### Notes
+- Marker names use `.` separators (never `/`, which breaks Profiler chart highlighting).
+- `IAsyncModule.InitializeAsync()` is intentionally not wrapped by a `ProfilerMarker` scope (a marker scope cannot straddle an `await`); its timing remains captured via `Stopwatch` into `ModuleEntry.AsyncMilliseconds`.
+
+## [1.0.5] - 2026-09-24
 ### Fixed
 - [Warning] ignore AppDomain warnings for lower Unity version supports.
 

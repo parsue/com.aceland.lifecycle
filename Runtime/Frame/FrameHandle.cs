@@ -1,6 +1,9 @@
 using System;
 using System.Threading;
 using UnityEngine;
+#if ENABLE_PROFILER
+using Unity.Profiling;
+#endif
 
 namespace AceLand.Lifecycle
 {
@@ -74,6 +77,14 @@ namespace AceLand.Lifecycle
         private readonly string _methodLabel;
         private readonly Type _ownerType;
 
+#if ENABLE_PROFILER
+        /// <summary>Level B marker, built once at construction. Prefers the scheduling call site
+        /// ("Type.Member:line", passed down from <see cref="LifecycleFrame"/> via caller-info attributes)
+        /// and falls back to <see cref="_methodLabel"/>, so the Unity Profiler shows the concrete caller
+        /// (and keeps distinct call sites distinct) instead of a generic UpdateFunction.Invoke().</summary>
+        private readonly ProfilerMarker _marker;
+#endif
+
         private CancellationTokenRegistration _ctReg;
         private LinkedTokenSource _owned;  // optional linked source this handle owns / disposes
 
@@ -86,7 +97,8 @@ namespace AceLand.Lifecycle
 
         private FrameHandle(Kind kind, Action action, Func<bool> predicate,
             int framesRemaining, int maxFrames, float seconds, bool unscaled,
-            PlayerLoopPoint point, CancellationToken token, LinkedTokenSource owned)
+            PlayerLoopPoint point, CancellationToken token, LinkedTokenSource owned,
+            string callSite = null)
         {
             _kind = kind;
             _action = action;
@@ -100,6 +112,13 @@ namespace AceLand.Lifecycle
 
             (_methodLabel, _ownerType) = DescribeMethod(action);
 
+#if ENABLE_PROFILER
+            // Prefer the caller site (who scheduled this work) over the compiler-generated lambda name,
+            // so distinct call sites stay distinct in the Profiler instead of collapsing into one node.
+            _marker = new ProfilerMarker(LifecycleProfilerMarkers.FramePrefix +
+                (string.IsNullOrEmpty(callSite) ? _methodLabel : callSite));
+#endif
+
             if (token.CanBeCanceled)
                 _ctReg = token.Register(static state => ((FrameHandle)state)._cancelRequested = true, this);
         }
@@ -107,24 +126,24 @@ namespace AceLand.Lifecycle
         // ── Factories (created here, registered by FrameScheduler) ──────────
 
         internal static FrameHandle AfterFrames(Action action, int frames, PlayerLoopPoint point,
-            CancellationToken token = default, LinkedTokenSource owned = null)
+            CancellationToken token = default, LinkedTokenSource owned = null, string callSite = null)
             => new(Kind.AfterFrames, action, null,
-                Math.Max(0, frames - 1), -1, 0f, false, point, token, owned);
+                Math.Max(0, frames - 1), -1, 0f, false, point, token, owned, callSite);
 
         internal static FrameHandle When(Func<bool> predicate, Action action, PlayerLoopPoint point,
-            CancellationToken token = default, LinkedTokenSource owned = null)
+            CancellationToken token = default, LinkedTokenSource owned = null, string callSite = null)
             => new(Kind.When, action, predicate,
-                0, -1, 0f, false, point, token, owned);
+                0, -1, 0f, false, point, token, owned, callSite);
 
         internal static FrameHandle EveryFrame(Action action, int? maxFrames, PlayerLoopPoint point,
-            CancellationToken token = default, LinkedTokenSource owned = null)
+            CancellationToken token = default, LinkedTokenSource owned = null, string callSite = null)
             => new(Kind.EveryFrame, action, null,
-                0, maxFrames.HasValue ? Math.Max(1, maxFrames.Value) : -1, 0f, false, point, token, owned);
+                0, maxFrames.HasValue ? Math.Max(1, maxFrames.Value) : -1, 0f, false, point, token, owned, callSite);
 
         internal static FrameHandle Delayed(Action action, float seconds, bool unscaled, PlayerLoopPoint point,
-            CancellationToken token = default, LinkedTokenSource owned = null)
+            CancellationToken token = default, LinkedTokenSource owned = null, string callSite = null)
             => new(Kind.Delayed, action, null,
-                0, -1, Mathf.Max(0f, seconds), unscaled, point, token, owned);
+                0, -1, Mathf.Max(0f, seconds), unscaled, point, token, owned, callSite);
 
         // ── IFrameHandle ────────────────────────────────────────────────────
 
@@ -252,7 +271,13 @@ namespace AceLand.Lifecycle
         {
             try
             {
+#if ENABLE_PROFILER
+                // Level B: measure only the user action, nested under the Level A pump marker.
+                using (_marker.Auto())
+                    _action?.Invoke();
+#else
                 _action?.Invoke();
+#endif
                 return true;
             }
             catch (Exception e)

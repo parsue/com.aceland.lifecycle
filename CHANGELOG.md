@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 ---
 # Release - published
 
-## [1.0.6] - 2026-01-14
+## [1.0.6] - 2026-11-14
 ### Added
 - **Unity Profiler integration (`ProfilerMarker`).** Lifecycle's per-frame and per-module work now shows up as named samples in the Unity Profiler instead of a single generic `UpdateFunction.Invoke()`. Three levels:
   - **Level A** — one marker per PlayerLoop injection point (`AceLand.Lifecycle.Pump.<Point>`), wrapping the whole per-point pump in `FrameScheduler`.
